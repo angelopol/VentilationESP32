@@ -2,6 +2,8 @@
 
 This project implements a system based on an ESP32 microcontroller that uses Bluetooth to receive commands and control a fan and LEDs based on the temperature and humidity measured by a DHT11 sensor.
 
+![image](https://github.com/user-attachments/assets/a596511f-6e45-47b3-971b-50e81033e8c6)
+
 ## Main Features
 
 ### 1. Initial Setup (`setup`)
