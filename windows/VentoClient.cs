@@ -36,8 +36,6 @@ namespace Vento
         };
 
         public event Action Changed;
-        // bool: la pidió el usuario (al pulsar una opción) y no el reintento automático
-        public event Action<bool> NeedsPairing;
 
         public VentoClient(Config config)
         {
@@ -74,7 +72,7 @@ namespace Vento
             {
                 if (_transport == null)
                 {
-                    if (DateTime.Now >= _nextConnect) await ConnectAsync(false);
+                    if (DateTime.Now >= _nextConnect) await ConnectAsync();
                     return;
                 }
 
@@ -93,7 +91,7 @@ namespace Vento
                 catch
                 {
                     Drop();
-                    await ConnectAsync(false);
+                    await ConnectAsync();
                 }
             }
             finally { _busy = false; }
@@ -105,7 +103,7 @@ namespace Vento
             _busy = true;
             try
             {
-                if (_transport == null && !await ConnectAsync(true)) return false;
+                if (_transport == null && !await ConnectAsync()) return false;
                 if (op == null) return true;
                 try
                 {
@@ -116,7 +114,7 @@ namespace Vento
                 {
                     // La conexión pudo caerse justo ahora: reconecta una vez y reintenta
                     Drop();
-                    if (!await ConnectAsync(true)) return false;
+                    if (!await ConnectAsync()) return false;
                     try
                     {
                         Update(await op(_transport));
@@ -132,7 +130,7 @@ namespace Vento
             finally { _busy = false; }
         }
 
-        private async Task<bool> ConnectAsync(bool userInitiated)
+        private async Task<bool> ConnectAsync()
         {
             if (await TryWifiAsync()) return true;
 
@@ -141,7 +139,6 @@ namespace Vento
             {
                 SetStatus(LinkStatus.NotPaired);
                 _nextConnect = DateTime.Now.AddSeconds(10);
-                NeedsPairing?.Invoke(userInitiated);
                 return false;
             }
 

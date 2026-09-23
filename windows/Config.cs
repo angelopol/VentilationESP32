@@ -10,6 +10,8 @@ namespace Vento
         // DEVICE_HOSTNAME del firmware: se usa para http://<Host>.local y como nombre Bluetooth
         public string Host { get; set; } = "vento";
         public bool AutostartSetup { get; set; }
+        // Modo que se aplica al iniciar la app (0-7); -1 lo desactiva
+        public int StartupMode { get; set; } = 5;
 
         private static string Dir =>
             Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData), "Vento");

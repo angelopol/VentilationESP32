@@ -10,8 +10,9 @@ namespace Vento
 {
     public partial class App : Application
     {
-        // Tras arrancar Windows la red puede tardar: no se abre el emparejamiento automáticamente antes de esto
-        private static readonly TimeSpan PairPromptGrace = TimeSpan.FromSeconds(20);
+        // El modo de inicio solo se aplica si Vento responde en este tiempo tras arrancar la app
+        // (si se enciende mucho después, no se le cambia el modo por sorpresa)
+        private static readonly TimeSpan StartupModeWindow = TimeSpan.FromMinutes(5);
 
         private Mutex _mutex;
         private Config _config;
@@ -21,9 +22,9 @@ namespace Vento
         private PanelWindow _panel;
         private DateTime _panelClosedAt = DateTime.MinValue;
         private DateTime _startedAt;
-        private bool _pairPromptShown;
+        private bool _startupModeDone;
 
-        private WinForms.ToolStripMenuItem _statusItem, _webItem, _startItem;
+        private WinForms.ToolStripMenuItem _statusItem, _webItem, _startItem, _startupModeItem;
         private readonly WinForms.ToolStripMenuItem[] _levelItems = new WinForms.ToolStripMenuItem[6];
 
         protected override void OnStartup(StartupEventArgs e)
@@ -39,7 +40,7 @@ namespace Vento
             _config = Config.Load();
             _client = new VentoClient(_config);
             _client.Changed += RefreshTray;
-            _client.NeedsPairing += OnNeedsPairing;
+            _client.Changed += ApplyStartupMode;
 
             SetupTray();
             _client.Start();
@@ -97,6 +98,15 @@ namespace Vento
             };
             menu.Items.Add(_startItem);
 
+            _startupModeItem = new WinForms.ToolStripMenuItem("Nivel 5 al iniciar")
+            { Checked = _config.StartupMode >= 0, CheckOnClick = true };
+            _startupModeItem.CheckedChanged += (s, a) =>
+            {
+                _config.StartupMode = _startupModeItem.Checked ? 5 : -1;
+                _config.Save();
+            };
+            menu.Items.Add(_startupModeItem);
+
             menu.Items.Add(new WinForms.ToolStripSeparator());
             var exitItem = new WinForms.ToolStripMenuItem("Salir");
             exitItem.Click += (s, a) => ExitApp();
@@ -141,6 +151,17 @@ namespace Vento
             _tray.Text = tip.Length > 63 ? tip.Substring(0, 63) : tip;
         }
 
+        // Al iniciar (normalmente con Windows) pone el modo configurado en cuanto hay conexión
+        private void ApplyStartupMode()
+        {
+            if (_startupModeDone || !_client.IsConnected) return;
+            _startupModeDone = true;
+            int mode = _config.StartupMode;
+            if (mode < 0 || mode > 7 || DateTime.Now - _startedAt > StartupModeWindow) return;
+            if (_client.State != null && _client.State.Mode == mode) return;
+            _ = _client.SetModeAsync(mode);
+        }
+
         // ---------------------------------------------------------------- panel
         private void TogglePanel()
         {
@@ -160,14 +181,8 @@ namespace Vento
         }
 
         // ------------------------------------------------------------ pairing
-        private void OnNeedsPairing(bool userInitiated)
-        {
-            if (userInitiated) return; // NotifyUnavailable se encarga
-            if (_pairPromptShown || DateTime.Now - _startedAt < PairPromptGrace) return;
-            _pairPromptShown = true;
-            OpenPairing();
-        }
-
+        // Solo cuando el usuario pulsa una opción sin conexión (o desde el menú):
+        // si Vento está apagado al arrancar no se muestra nada.
         private void OpenPairing()
         {
             OpenUrl("ms-settings:bluetooth");

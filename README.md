@@ -81,7 +81,9 @@ In modes 6 and 7 it sends back the heat index as a text line every 500 ms, like 
 - **Left-click**: a small window with the heat index, **Auto** / **Progresivo** and the target temperature.
 - The icon turns grey when Vento isn't reachable.
 
-It connects to `http://vento.local` and falls back to Bluetooth when WiFi doesn't answer. Bluetooth is used on demand: each action connects, sends the command, reads the new state and disconnects, so Bluetooth stays free for the phone. It keeps checking WiFi and switches back as soon as it answers. If Vento isn't reachable over WiFi and isn't paired, it opens Windows' Bluetooth settings so you can pair `vento`.
+It connects to `http://vento.local` and falls back to Bluetooth when WiFi doesn't answer. Bluetooth is used on demand: each action connects, sends the command, reads the new state and disconnects, so Bluetooth stays free for the phone. It keeps checking WiFi and switches back as soon as it answers. If you pick an option while Vento isn't reachable over WiFi and isn't paired, it opens Windows' Bluetooth settings so you can pair `vento`. When nothing is clicked it stays silent: if Vento is off when the PC starts, no errors or windows appear.
+
+When the app starts (normally with Windows) it sets Vento to **speed 5** as soon as it reaches it, if that happens within 5 minutes; if Vento is off, nothing happens. The *Nivel 5 al iniciar* menu option turns this off (`StartupMode` in the config: `0`–`7`, or `-1` to disable).
 
 It starts with Windows automatically after the first run (registry `Run` key, no admin needed). Settings are in `%APPDATA%\Vento\config.json`; `Host` must match `DEVICE_HOSTNAME`.
 
