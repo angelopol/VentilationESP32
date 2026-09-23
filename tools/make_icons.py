@@ -90,6 +90,11 @@ def main():
     with open(os.path.join(ROOT, "Vent", "icons.h"), "w", newline="\n") as f:
         f.write("\n".join(out))
 
+    # Icono de la app de Windows (exe y bandeja)
+    ico_sizes = [(16, 16), (20, 20), (24, 24), (32, 32), (40, 40), (48, 48), (64, 64), (128, 128), (256, 256)]
+    draw_icon(256).save(os.path.join(ROOT, "windows", "vento.ico"), sizes=ico_sizes)
+    print("windows/vento.ico")
+
 
 if __name__ == "__main__":
     main()

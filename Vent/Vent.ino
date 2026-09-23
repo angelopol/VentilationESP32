@@ -4,11 +4,16 @@
 #include <DNSServer.h>
 #include <Preferences.h>
 #include <esp_arduino_version.h>
+#include "BluetoothSerial.h"
 #include "DHT.h"
 
 #include "secrets.h"   // WIFI_SSID, WIFI_PASSWORD, DEVICE_HOSTNAME (ver secrets.example.h)
 #include "web_ui.h"
 #include "icons.h"
+
+// Definido antes de cualquier funcion: el IDE inserta los prototipos automaticos
+// justo antes de la primera funcion y necesitan conocer este tipo
+struct WifiCred { String ssid; String pass; };
 
 // Red propia para configurar el WiFi si no se puede conectar al router
 #ifndef AP_SSID
@@ -18,13 +23,19 @@
 #define AP_PASSWORD "vento1234"
 #endif
 
+#if !defined(CONFIG_BT_ENABLED) || !defined(CONFIG_BLUEDROID_ENABLED)
+#error Bluetooth no esta habilitado para esta placa
+#endif
+
 #ifndef ESP_ARDUINO_VERSION_MAJOR
 #define ESP_ARDUINO_VERSION_MAJOR 2
 #endif
 
 #define PWM1_Ch    0
 #define PWM1_Res   8
-#define PWM1_Freq  40
+// 25 kHz: fuera del rango audible, giro suave. Si el driver se calienta o la velocidad
+// no cambia entre niveles (modulos con optoacoplador), bajar a 1000 o 500.
+#define PWM1_Freq  25000
 
 #define FAN_PIN 25     // salida PWM al ventilador (ajustar al pin real)
 
@@ -44,7 +55,19 @@ int dutyCycle = 0;
 float h = NAN, t = NAN, hic = NAN;
 bool hasReading = false;
 
-const int SPEED_PWM[] = {0, 51, 102, 153, 204, 255};
+// PWM minimo con el que el motor se mantiene girando: los niveles 1-5 y el modo
+// progresivo se reparten entre este valor y 255. Subirlo si el nivel 1 se queda corto.
+#define FAN_MIN_PWM 179   // ~70 %
+#define FAN_KICK_MS 500   // al arrancar desde parado se aplica el 100 % este tiempo
+
+int speedPwm(int level)   // nivel 1..5 -> PWM
+{
+  return FAN_MIN_PWM + (255 - FAN_MIN_PWM) * (level - 1) / 4;
+}
+
+int appliedDuty = 0;      // lo que recibe el motor (255 durante el impulso de arranque)
+unsigned long kickUntil = 0;
+bool kicking = false;
 
 const unsigned long SENSOR_INTERVAL = 2000;   // el DHT11 no admite lecturas mas rapidas
 const unsigned long BLINK_SLOW = 500;
@@ -53,10 +76,10 @@ const unsigned long CONNECT_TIMEOUT = 15000;      // tiempo maximo por intento d
 const unsigned long AP_AFTER_DISCONNECT = 30000;  // sin router este tiempo -> se abre la red propia
 const unsigned long AP_RETRY_INTERVAL = 60000;    // con red propia activa, reintenta el router
 const unsigned long AP_LINGER = 30000;            // tras conectar, mantiene la red propia un poco
-unsigned long lastSensor = 0, lastBlink = 0;
+const unsigned long BT_SEND_INTERVAL = 500;   // envio de la sensacion termica por Bluetooth
+unsigned long lastSensor = 0, lastBlink = 0, lastBtSend = 0;
 bool blinkOn = false;
 
-struct WifiCred { String ssid; String pass; };
 WifiCred creds[2];              // red guardada desde el portal y la de secrets.h
 int credCount = 0, credIdx = 0;
 WifiCred pendingCred;           // red enviada desde el portal, se guarda solo si conecta
@@ -73,6 +96,7 @@ Preferences prefs;
 
 DHT dht(DHTPIN, DHTTYPE);
 WebServer server(80);
+BluetoothSerial SerialBT;
 
 // ---------- Ventilador ----------
 
@@ -86,28 +110,53 @@ void fanSetup()
 #endif
 }
 
+void fanApply(int duty)
+{
+  appliedDuty = duty;
+#if ESP_ARDUINO_VERSION_MAJOR >= 3
+  ledcWrite(FAN_PIN, duty);
+#else
+  ledcWrite(PWM1_Ch, duty);
+#endif
+}
+
 void fanWrite(int duty)
 {
   dutyCycle = constrain(duty, 0, 255);
-#if ESP_ARDUINO_VERSION_MAJOR >= 3
-  ledcWrite(FAN_PIN, dutyCycle);
-#else
-  ledcWrite(PWM1_Ch, dutyCycle);
-#endif
+  if (dutyCycle == 0) {
+    kicking = false;
+    fanApply(0);
+  } else if (appliedDuty == 0 && dutyCycle < 255) {
+    // Motor parado: impulso al 100 % para vencer la inercia, luego baja al nivel pedido
+    kicking = true;
+    kickUntil = millis() + FAN_KICK_MS;
+    fanApply(255);
+  } else if (!kicking) {
+    fanApply(dutyCycle);
+  }
+}
+
+void fanLoop()
+{
+  if (kicking && (long)(millis() - kickUntil) >= 0) {
+    kicking = false;
+    fanApply(dutyCycle);
+  }
 }
 
 void updateFan()
 {
   if (fanMode >= 1 && fanMode <= 5) {
-    fanWrite(SPEED_PWM[fanMode]);
+    fanWrite(speedPwm(fanMode));
   } else if (fanMode == 6) {
     if (!hasReading) { fanWrite(0); return; }
     fanWrite(hic >= tmp ? 255 : 0);
   } else if (fanMode == 7) {
     if (!hasReading) { fanWrite(0); return; }
     if (hic <= tmp) {
-      long re = 255 - (((tmp - hic) * 204) / tmp);
-      fanWrite(re);
+      // Fraccion original 0.2..1 reescalada al rango util del motor
+      float f = constrain(1.0f - (tmp - hic) * 0.8f / tmp, 0.2f, 1.0f);
+      fanWrite(FAN_MIN_PWM + (255 - FAN_MIN_PWM) * (f - 0.2f) / 0.8f);
     } else {
       fanWrite(255);
     }
@@ -121,7 +170,6 @@ void updateFan()
 void setMode(int m)
 {
   if (m < 0 || m > 7 || m == fanMode) return;
-  fanWrite(0);
   fanMode = m;
   Serial.printf("Modo: %d\n", fanMode);
   updateFan();
@@ -135,7 +183,7 @@ void setSetpoint(long value)
   updateFan();
 }
 
-// Protocolo de un caracter de la version Bluetooth, ahora por el monitor serie:
+// Protocolo de un caracter (Bluetooth y monitor serie):
 // '0'-'7' cambian de modo, 'a'-'s' fijan la temperatura 16..70
 void handleCommand(char c)
 {
@@ -369,7 +417,7 @@ String jsonString(const String &value)
   return out;
 }
 
-void sendState()
+String stateJson()
 {
   String json = "{\"mode\":";
   json += fanMode;
@@ -386,8 +434,13 @@ void sendState()
   json += ",\"rssi\":";
   json += WiFi.RSSI();
   json += '}';
+  return json;
+}
+
+void sendState()
+{
   server.sendHeader("Cache-Control", "no-store");
-  server.send(200, "application/json", json);
+  server.send(200, "application/json", stateJson());
 }
 
 void sendIcon(const uint8_t *data, size_t len)
@@ -530,14 +583,40 @@ void setup()
   Serial.begin(115200);
   dht.begin();
 
+  SerialBT.begin(DEVICE_HOSTNAME);   // mismo nombre que en la red
+  Serial.printf("Bluetooth activo como \"%s\"\n", DEVICE_HOSTNAME);
+
   wifiSetup();
   webSetup();
+}
+
+// Bluetooth: recibe comandos y, en los modos 6 y 7, envia la sensacion termica como en la version original
+void btLoop()
+{
+  while (SerialBT.available()) {
+    char c = SerialBT.read();
+    if (c == '\n' || c == '\r') continue;
+    if (c == '?') {                    // consulta de estado: responde con el mismo JSON que /api/state
+      SerialBT.println(stateJson());
+      continue;
+    }
+    Serial.printf("BT: %c\n", c);
+    handleCommand(c);
+  }
+
+  if (fanMode >= 6 && hasReading && SerialBT.hasClient()
+      && millis() - lastBtSend >= BT_SEND_INTERVAL) {
+    lastBtSend = millis();
+    SerialBT.println(hic);
+  }
 }
 
 void loop()
 {
   server.handleClient();
   wifiLoop();
+  btLoop();
+  fanLoop();
 
   while (Serial.available()) {
     char c = Serial.read();
