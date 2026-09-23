@@ -1,4 +1,4 @@
-"""Genera los iconos PNG de la PWA y los incrusta en ../icons.h.
+"""Genera los iconos PNG de la PWA y los incrusta en ../Vent/icons.h.
 
 Uso:  python tools/make_icons.py   (requiere Pillow)
 """
@@ -87,7 +87,7 @@ def main():
         print(f"{name}: {len(data)} bytes")
         out.append(c_array(name, data))
         out.append("")
-    with open(os.path.join(ROOT, "icons.h"), "w", newline="\n") as f:
+    with open(os.path.join(ROOT, "Vent", "icons.h"), "w", newline="\n") as f:
         f.write("\n".join(out))
 
 
