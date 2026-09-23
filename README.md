@@ -1,56 +1,72 @@
-# Ventilation Control System with ESP32
+# Vento – Ventilation Control System with ESP32
 
-This project implements a system based on an ESP32 microcontroller that uses Bluetooth to receive commands and control a fan and LEDs based on the temperature and humidity measured by a DHT11 sensor.
+An ESP32 connects to your WiFi network and serves a local web app (installable as a PWA on iPhone) to control a fan and LEDs based on the temperature and humidity measured by a DHT11 sensor.
 
 ![image](https://github.com/user-attachments/assets/a596511f-6e45-47b3-971b-50e81033e8c6)
 
-## Main Features
+## Setup
 
-### 1. Initial Setup (`setup`)
-- Configures the PWM channel to control the fan.
-- Sets the LED pins as outputs.
-- Initializes serial and Bluetooth communication.
-- Initializes the DHT11 sensor to measure temperature and humidity.
+1. Install the **ESP32** board package and the **DHT sensor library** (Adafruit) in the Arduino IDE.
+2. Copy `secrets.example.h` to `secrets.h` and fill in your WiFi SSID and password (`secrets.h` is git-ignored). If they are wrong, you can set the network from the phone instead (see below).
+3. Check `FAN_PIN` in `Vent.ino` matches the pin wired to the fan driver.
+4. Flash the board and open the serial monitor (115200) to see the assigned IP.
 
-### 2. Receiving Commands via Bluetooth
-- Uses the `BluetoothSerial` library to receive commands from a paired Bluetooth device.
-- The received commands are stored in the `var` variable and processed to change the system's state.
+## Using the app
 
-### 3. LED Control
-- The LEDs (red, green, and blue) indicate different system states:
-  - **Blue LED**: Indicates that the system is measuring temperature and humidity.
-  - **Red LED**: Indicates a resting state.
-  - **Green LED**: Indicates that the fan is running.
+- Open `http://vento.local` (or the IP shown in the serial monitor) from any device on the same network.
+- **iPhone:** open it in Safari → Share → *Add to Home Screen*. It launches full-screen with the Vento icon.
+- No internet is needed, only a shared local network.
 
-### 4. Measuring Temperature and Humidity
-- Uses the DHT11 sensor to measure:
-  - **Relative Humidity (`h`)**
-  - **Temperature (`t`)**
-  - **Heat Index (`hic`)**, which combines temperature and humidity to calculate a thermal sensation.
+## WiFi setup mode (own network)
 
-### 5. Fan Control
-- The fan is controlled via PWM (Pulse Width Modulation) based on the measured temperature and a reference value (`tmp`).
-- The reference value is adjusted via Bluetooth commands (`a` to `s`), which correspond to different target temperatures.
+If the ESP32 can't join a known network within 15 s at boot, or loses the router for more than 30 s, it creates its own WiFi network **"Vento"** (password `vento1234`, configurable in `secrets.h`):
 
-### 6. System States
-- The system has several states (`i`), controlled by Bluetooth commands (`0` to `7`):
-  - **State 0**: Resting (fan off, red LED on).
-  - **State 1-5**: Different fan speed levels, controlled by PWM.
-  - **State 6**: Temperature-based control mode (turns on the fan if the temperature exceeds the reference value).
-  - **State 7**: Similar to state 6, but with a different behavior in PWM calculation.
+1. Join "Vento" from the phone. The setup page opens automatically (captive portal); otherwise go to `http://192.168.4.1/wifi`.
+2. Pick your network, type the password and tap **Conectar**. Only 2.4 GHz networks are supported.
+3. If it connects, the network is saved in flash and the "Vento" network turns off after 30 s. A wrong password is never saved.
 
-### 7. PWM Calculation
-- In state 7, the PWM is dynamically adjusted based on the difference between the measured temperature and the reference value.
+The fan can also be controlled at `http://192.168.4.1` while connected to "Vento", with no router at all. The setup page is always available from the app under *Configurar WiFi*.
 
-### 8. Main Loop (`loop`)
-- The code enters specific `while` loops for each state (`i`).
-- Within each loop:
-  - Bluetooth commands are read to change the state or adjust the reference value.
-  - The LEDs and fan PWM are updated according to the current state.
+Known networks are tried in order: the one saved from the portal, then the one in `secrets.h`. While "Vento" is active and nobody is connected to it, the ESP32 retries the router every minute.
 
-### 9. Bluetooth Interaction
-- Sends temperature and humidity data to the connected Bluetooth device.
-- Allows real-time adjustment of the system's behavior via commands.
+## LEDs
 
-## Summary
-This project implements an intelligent ventilation control system that uses Bluetooth to receive commands, a DHT11 sensor to measure temperature and humidity, and LEDs to indicate the system's state. The fan is controlled via PWM, and its speed is adjusted based on the measured temperature or specific commands.
+| LED   | Meaning |
+|-------|---------|
+| Red   | **Solid**: connected to WiFi. **Slow blink**: connecting to the router. **Fast blink**: own "Vento" network active (setup mode). |
+| Green | Fan running (speeds 1–5 and Progressive mode). |
+| Blue  | Temperature-controlled mode (Auto / Progressive). |
+
+The fan keeps working in its current mode while WiFi is down.
+
+## Modes
+
+| Mode | Behavior |
+|------|----------|
+| 0 – Off | Fan stopped. |
+| 1–5 | Fixed speeds (PWM 51, 102, 153, 204, 255). |
+| 6 – Auto | Full speed when the heat index ≥ target temperature, off otherwise. |
+| 7 – Progressive | PWM scales with how close the heat index is to the target; full speed above it. |
+
+The target temperature ranges from 16 °C to 70 °C in steps of 3.
+
+## HTTP API
+
+| Method | Path | Description |
+|--------|------|-------------|
+| GET  | `/api/state` | `{mode, setpoint, pwm, temp, hum, hic, rssi}` |
+| POST | `/api/mode?v=0..7` | Change mode |
+| POST | `/api/setpoint?v=16..70` | Change target temperature |
+| GET  | `/api/wifi/status` | WiFi / setup-mode status |
+| GET  | `/api/wifi/scan` | Nearby networks (asynchronous, poll until `scanning` is false) |
+| POST | `/api/wifi` (`ssid`, `pass`) | Try a network; saved only if it connects |
+| POST | `/api/wifi/forget` | Forget the saved network |
+
+The original single-character commands (`0`–`7` for modes, `a`–`s` for target temperature) still work through the serial monitor for debugging.
+
+## Files
+
+- `Vent.ino` – firmware (WiFi, web server, fan/LED control).
+- `web_ui.h` – the web app HTML and PWA manifest.
+- `icons.h` – embedded PNG icons, generated by `tools/make_icons.py`.
+- `secrets.example.h` – template for WiFi credentials and the setup network.
