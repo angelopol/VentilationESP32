@@ -57,6 +57,26 @@ namespace Vento
         // Pide el estado actual (por Bluetooth no se consulta periódicamente)
         public Task<bool> RefreshAsync() => RunAsync(t => t.GetStateAsync());
 
+        // Al apagar Windows: el hilo de la interfaz queda bloqueado esperando, así que la operación
+        // corre en otro hilo con una conexión nueva por el mismo medio que se estaba usando.
+        public bool SetModeBlocking(int mode, TimeSpan timeout)
+        {
+            _timer.Stop();
+            if (!IsConnected) return false;
+            string host = _config.Host;
+            bool wifi = Status == LinkStatus.Wifi;
+            var task = Task.Run(async () =>
+            {
+                ITransport t = wifi ? new HttpTransport(host)
+                    : BluetoothTransport.FindPaired(host) is ulong addr ? new BluetoothOnDemand(addr) : null;
+                if (t == null) return false;
+                using (t) { await t.SetModeAsync(mode); }
+                return true;
+            });
+            try { return task.Wait(timeout) && task.Result; }
+            catch { return false; }
+        }
+
         // Reintenta ya (p. ej. tras emparejar)
         public Task<bool> ReconnectAsync()
         {

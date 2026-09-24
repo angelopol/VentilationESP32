@@ -85,6 +85,8 @@ It connects to `http://vento.local` and falls back to Bluetooth when WiFi doesn'
 
 When the app starts (normally with Windows) it sets Vento to **speed 5** as soon as it reaches it, if that happens within 5 minutes; if Vento is off, nothing happens. The *Nivel 5 al iniciar* menu option turns this off (`StartupMode` in the config: `0`–`7`, or `-1` to disable).
 
+When Windows shuts down, restarts or logs off, it turns Vento **off** (over WiFi or Bluetooth, whichever it was using, waiting at most 4 s so shutdown isn't held up). The *Apagar al apagar el PC* menu option turns this off (`ShutdownMode` in the config: `0`–`7`, or `-1` to disable).
+
 It starts with Windows automatically after the first run (registry `Run` key, no admin needed). Settings are in `%APPDATA%\Vento\config.json`; `Host` must match `DEVICE_HOSTNAME`.
 
 **Download / release:** pushing a `v*` tag (e.g. `git tag v1.0.0 && git push --tags`) runs `.github/workflows/release-windows.yml`, which publishes a single self-contained `Vento.exe` to GitHub Releases. The workflow can also be run manually from the Actions tab.

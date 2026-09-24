@@ -13,6 +13,8 @@ namespace Vento
         // El modo de inicio solo se aplica si Vento responde en este tiempo tras arrancar la app
         // (si se enciende mucho después, no se le cambia el modo por sorpresa)
         private static readonly TimeSpan StartupModeWindow = TimeSpan.FromMinutes(5);
+        // Windows avisa de que una app bloquea el apagado a los ~5 s: no esperar más que eso
+        private static readonly TimeSpan ShutdownModeTimeout = TimeSpan.FromSeconds(4);
 
         private Mutex _mutex;
         private Config _config;
@@ -24,7 +26,7 @@ namespace Vento
         private DateTime _startedAt;
         private bool _startupModeDone;
 
-        private WinForms.ToolStripMenuItem _statusItem, _webItem, _startItem, _startupModeItem;
+        private WinForms.ToolStripMenuItem _statusItem, _webItem, _startItem, _startupModeItem, _shutdownModeItem;
         private readonly WinForms.ToolStripMenuItem[] _levelItems = new WinForms.ToolStripMenuItem[6];
 
         protected override void OnStartup(StartupEventArgs e)
@@ -44,6 +46,7 @@ namespace Vento
 
             SetupTray();
             _client.Start();
+            SessionEnding += (s, a) => ApplyShutdownMode();
 
             // Inicio con Windows activado la primera vez; luego lo decide el menú.
             if (!_config.AutostartSetup && Autostart.Enable())
@@ -107,6 +110,15 @@ namespace Vento
             };
             menu.Items.Add(_startupModeItem);
 
+            _shutdownModeItem = new WinForms.ToolStripMenuItem("Apagar al apagar el PC")
+            { Checked = _config.ShutdownMode >= 0, CheckOnClick = true };
+            _shutdownModeItem.CheckedChanged += (s, a) =>
+            {
+                _config.ShutdownMode = _shutdownModeItem.Checked ? 0 : -1;
+                _config.Save();
+            };
+            menu.Items.Add(_shutdownModeItem);
+
             menu.Items.Add(new WinForms.ToolStripSeparator());
             var exitItem = new WinForms.ToolStripMenuItem("Salir");
             exitItem.Click += (s, a) => ExitApp();
@@ -160,6 +172,15 @@ namespace Vento
             if (mode < 0 || mode > 7 || DateTime.Now - _startedAt > StartupModeWindow) return;
             if (_client.State != null && _client.State.Mode == mode) return;
             _ = _client.SetModeAsync(mode);
+        }
+
+        // Al apagar Windows o cerrar sesión pone el modo configurado (por defecto, apagado)
+        private void ApplyShutdownMode()
+        {
+            int mode = _config.ShutdownMode;
+            if (mode < 0 || mode > 7) return;
+            if (_client.State != null && _client.State.Mode == mode) return;
+            _client.SetModeBlocking(mode, ShutdownModeTimeout);
         }
 
         // ---------------------------------------------------------------- panel

@@ -12,6 +12,8 @@ namespace Vento
         public bool AutostartSetup { get; set; }
         // Modo que se aplica al iniciar la app (0-7); -1 lo desactiva
         public int StartupMode { get; set; } = 5;
+        // Modo que se aplica al apagar Windows o cerrar sesión (0-7); -1 lo desactiva
+        public int ShutdownMode { get; set; } = 0;
 
         private static string Dir =>
             Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData), "Vento");
