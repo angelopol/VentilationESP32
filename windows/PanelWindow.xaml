@@ -49,7 +49,7 @@
                 <TextBlock x:Name="SetpointText" Text="--°" HorizontalAlignment="Right"
                            FontSize="20" FontWeight="SemiBold" Foreground="White"/>
             </Grid>
-            <Slider x:Name="SetpointSlider" Minimum="16" Maximum="70" TickFrequency="3"
+            <Slider x:Name="SetpointSlider" Minimum="16" Maximum="70" TickFrequency="1"
                     IsSnapToTickEnabled="True" Margin="0,8,0,0" ValueChanged="OnSetpointChanged"/>
 
             <Grid Margin="0,14,0,0">

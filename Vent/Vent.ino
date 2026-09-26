@@ -46,7 +46,7 @@ int LEDAZUL = 33;    // midiendo temperatura (modos 6 y 7)
 // Modo actual: 0 apagado, 1-5 velocidades fijas,
 // 6 todo/nada segun temperatura, 7 proporcional a la temperatura
 int fanMode = 0;
-long tmp = 30;       // temperatura objetivo (16..70, pasos de 3)
+long tmp = 30;       // temperatura objetivo (16..70, de grado en grado)
 int dutyCycle = 0;
 
 float h = NAN, t = NAN, hic = NAN;
@@ -172,8 +172,7 @@ void setMode(int m)
 
 void setSetpoint(long value)
 {
-  value = constrain(value, 16, 70);
-  tmp = 16 + ((value - 16 + 1) / 3) * 3;   // redondea al paso de 3 mas cercano
+  tmp = constrain(value, 16, 70);
   Serial.printf("Temperatura objetivo: %ld\n", tmp);
   updateFan();
 }

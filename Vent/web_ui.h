@@ -154,7 +154,7 @@ const char INDEX_HTML[] PROGMEM = R"html(<!DOCTYPE html>
 
 <section class="card" id="spCard">
   <div class="sp"><div class="label" style="margin:0">Temperatura objetivo</div><b id="spv">--°</b></div>
-  <input type="range" id="sp" min="16" max="70" step="3">
+  <input type="range" id="sp" min="16" max="70" step="1">
   <div class="hint">Se usa en los modos Auto y Progresivo.</div>
 </section>
 

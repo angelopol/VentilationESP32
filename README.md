@@ -48,7 +48,7 @@ The fan keeps working in its current mode while WiFi is down.
 | 6 – Auto | Full speed when the heat index ≥ target temperature, off otherwise. |
 | 7 – Progressive | PWM scales with how close the heat index is to the target; full speed above it. |
 
-The target temperature ranges from 16 °C to 70 °C in steps of 3.
+The target temperature ranges from 16 °C to 70 °C in steps of 1 °C.
 
 ## Air conditioners (Tuya)
 
