@@ -122,11 +122,11 @@ namespace Vento
             _startupModeItem = new WinForms.ToolStripMenuItem("Encender al iniciar Windows")
             {
                 Checked = _config.StartupMode >= 0, CheckOnClick = true,
-                ToolTipText = _acs.Count > 0 ? "Ventilador en nivel 5 y aires encendidos" : "Ventilador en nivel 5",
+                ToolTipText = _acs.Count > 0 ? "Ventilador en modo Auto y aires encendidos" : "Ventilador en modo Auto",
             };
             _startupModeItem.CheckedChanged += (s, a) =>
             {
-                _config.StartupMode = _startupModeItem.Checked ? 5 : -1;
+                _config.StartupMode = _startupModeItem.Checked ? 6 : -1;
                 _config.Save();
             };
             systemItem.DropDownItems.Add(_startupModeItem);

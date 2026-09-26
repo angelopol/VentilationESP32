@@ -48,7 +48,7 @@ The fan keeps working in its current mode while WiFi is down.
 | 6 – Auto | Full speed when the heat index ≥ target temperature, off otherwise. |
 | 7 – Progressive | PWM scales with how close the heat index is to the target; full speed above it. |
 
-The target temperature ranges from 16 °C to 70 °C in steps of 1 °C.
+The target temperature ranges from 16 °C to 70 °C in steps of 1 °C. It is stored in flash, so it survives restarts and power cuts.
 
 ## Air conditioners (Tuya)
 
@@ -112,7 +112,7 @@ It connects over WiFi: first to Vento's last known IP (reported in `/api/state`)
 
 **Sistema de ventilación** (tray submenu): the fan and the air conditioners follow the PC.
 
-- *Encender al iniciar Windows*: when the app starts (normally with Windows) it sets Vento to **speed 5** and turns **on** every air conditioner, each as soon as it answers, if that happens within 5 minutes; if a device is off or unreachable, nothing happens (`StartupMode` in the config: fan mode `0`–`7`, or `-1` to disable the whole startup).
+- *Encender al iniciar Windows*: when the app starts (normally with Windows) it sets Vento to **Auto** (using the target temperature stored in Vento) and turns **on** every air conditioner, each as soon as it answers, if that happens within 5 minutes; if a device is off or unreachable, nothing happens (`StartupMode` in the config: fan mode `0`–`7`, or `-1` to disable the whole startup).
 
 - *Apagar al apagar el PC*: when Windows shuts down, restarts or logs off, it turns Vento **off** and the air conditioners **off**, all at once and waiting at most 4 s so shutdown isn't held up (`ShutdownMode` in the config: fan mode `0`–`7`, or `-1` to disable).
 

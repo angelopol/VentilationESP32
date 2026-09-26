@@ -170,11 +170,27 @@ void setMode(int m)
   updateFan();
 }
 
+// La temperatura objetivo se guarda en flash y se recupera al arrancar. Solo se escribe
+// cuando cambia (la web la manda al soltar el slider), asi la flash apenas se desgasta.
 void setSetpoint(long value)
 {
-  tmp = constrain(value, 16, 70);
+  value = constrain(value, 16, 70);
+  if (value != tmp) {
+    prefs.begin("vento", false);
+    prefs.putLong("setpoint", value);
+    prefs.end();
+  }
+  tmp = value;
   Serial.printf("Temperatura objetivo: %ld\n", tmp);
   updateFan();
+}
+
+void loadSetpoint()
+{
+  prefs.begin("vento", true);
+  tmp = constrain(prefs.getLong("setpoint", tmp), 16, 70);
+  prefs.end();
+  Serial.printf("Temperatura objetivo guardada: %ld\n", tmp);
 }
 
 void readSensor()
@@ -627,6 +643,7 @@ void setup()
   Serial.begin(115200);
   Serial.printf("Arranque. Motivo del ultimo reinicio: %s\n", resetReason());
   dht.begin();
+  loadSetpoint();
 
   wifiSetup();
   configTime(0, 0, "pool.ntp.org");   // hora para los mensajes a los aires Tuya

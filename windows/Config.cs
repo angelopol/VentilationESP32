@@ -13,9 +13,9 @@ namespace Vento
         // DEVICE_HOSTNAME del firmware: se usa para http://<Host>.local
         public string Host { get; set; } = "vento";
         public bool AutostartSetup { get; set; }
-        // Sistema de ventilación al iniciar la app: modo del ventilador (0-7) y encender los aires;
-        // -1 lo desactiva
-        public int StartupMode { get; set; } = 5;
+        // Sistema de ventilación al iniciar la app: modo del ventilador (0-7; 6 = Auto, con la
+        // temperatura objetivo guardada en Vento) y encender los aires; -1 lo desactiva
+        public int StartupMode { get; set; } = 6;
         // Sistema de ventilación al apagar Windows o cerrar sesión: modo del ventilador (0-7) y
         // apagar los aires; -1 lo desactiva
         public int ShutdownMode { get; set; } = 0;
