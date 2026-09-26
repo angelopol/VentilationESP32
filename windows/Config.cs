@@ -10,7 +10,7 @@ namespace Vento
     // %APPDATA%\Vento\config.json
     public sealed class Config
     {
-        // DEVICE_HOSTNAME del firmware: se usa para http://<Host>.local y como nombre Bluetooth
+        // DEVICE_HOSTNAME del firmware: se usa para http://<Host>.local
         public string Host { get; set; } = "vento";
         public bool AutostartSetup { get; set; }
         // Sistema de ventilación al iniciar la app: modo del ventilador (0-7) y encender los aires;

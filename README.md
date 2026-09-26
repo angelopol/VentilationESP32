@@ -9,8 +9,7 @@ An ESP32 connects to your WiFi network and serves a local web app (installable a
 1. Install the **ESP32** board package, the **DHT sensor library** (Adafruit) and **ArduinoJson** (v7, by Benoit Blanchon) in the Arduino IDE.
 2. Open `Vent/Vent.ino` in the Arduino IDE. Copy `Vent/secrets.example.h` to `Vent/secrets.h` and fill in your WiFi SSID and password (`secrets.h` is git-ignored). If they are wrong, you can set the network from the phone instead (see below).
 3. Check `FAN_PIN` in `Vent/Vent.ino` matches the pin wired to the fan driver.
-4. In **Tools → Partition Scheme** select **"Huge APP (3MB No OTA/1MB SPIFFS)"**. WiFi and Bluetooth together don't fit in the default 1.2 MB app partition.
-5. Flash the board and open the serial monitor (115200) to see the assigned IP.
+4. Flash the board and open the serial monitor (115200) to see the assigned IP.
 
 ## Using the app
 
@@ -94,34 +93,28 @@ The ESP32 only polls the air conditioners (every 5 s) while someone has the app 
 | POST | `/api/ac/toggle?d=<i>&v=<dp>:<0\|1>` | Turn one of the configured `toggles` off / on |
 | GET  | `/api/ac/raw?d=<i>` | Raw DPS as reported by the device, to find out what each one is |
 
-## Bluetooth
+## WiFi only
 
-Vento is also a Bluetooth Classic (SPP) device named after `DEVICE_HOSTNAME` (`vento` by default). Pair it and send the original single-character commands:
+The serial monitor (115200) only shows logs: the assigned IP, the reason for the last restart and errors talking to the air conditioners. Everything is controlled over WiFi (web app, HTTP API and Windows app).
 
-- `0`–`7`: change mode.
-- `a`–`s`: target temperature 16–70 °C, in steps of 3 (`a` = 16, `b` = 19, … `s` = 70).
-- `?`: replies with the same JSON as `/api/state`, on one line.
-
-In modes 6 and 7 it sends back the heat index as a text line every 500 ms, like the original Bluetooth version. The same commands also work through the serial monitor.
-
-WiFi and Bluetooth share the ESP32's radio. With Bluetooth on, WiFi is never allowed to stay awake between beacons, so it answers more slowly and multicast (`vento.local` / mDNS) is less reliable; Vento gives WiFi priority, and the web app switches to Vento's IP as soon as it knows it. If the web app or `vento.local` still stall, add `#define DISABLE_BLUETOOTH` to `secrets.h`: the Windows app then only uses WiFi.
+Vento is WiFi only: Bluetooth was removed because it shares the ESP32's radio with WiFi and forces WiFi to sleep between beacons, which made the web app and `vento.local` (mDNS) unreliable. Without it the firmware is also much smaller and fits the default partition scheme.
 
 ## Windows app
 
 `windows/` contains a tray app (.NET 9, WPF):
 
-- **Right-click** the tray icon: Off and speeds 1–5 (the current one is checked), web panel, Bluetooth pairing, *Start with Windows*.
+- **Right-click** the tray icon: Off and speeds 1–5 (the current one is checked), web panel, *Start with Windows*.
 - **Left-click**: a small window with the heat index, **Auto** / **Progresivo** and the target temperature.
 - The icon turns grey when Vento isn't reachable.
 - **Air conditioners:** each one has its own submenu (power, target temperature, mode, fan) and its own block in the left-click window. Add them to `AirConditioners` in `%APPDATA%\Vento\config.json` with the same JSON as in `AC_DEVICES_JSON` (the Windows app talks to them directly, so it works even if the ESP32 is off). They're only polled while the window is open or the menu is shown. A `config.json` with a syntax error is never overwritten: the app says so and uses the defaults until it's fixed.
 
-It connects to `http://vento.local` and falls back to Bluetooth when WiFi doesn't answer. Bluetooth is used on demand: each action connects, sends the command, reads the new state and disconnects, so Bluetooth stays free for the phone. It keeps checking WiFi and switches back as soon as it answers. If you pick an option while Vento isn't reachable over WiFi and isn't paired, it opens Windows' Bluetooth settings so you can pair `vento`. When nothing is clicked it stays silent: if Vento is off when the PC starts, no errors or windows appear.
+It connects over WiFi: first to Vento's last known IP (reported in `/api/state`) and, if that doesn't answer, to `http://vento.local`, retrying every 10 s while Vento is unreachable. When nothing is clicked it stays silent: if Vento is off when the PC starts, no errors or windows appear.
 
 **Sistema de ventilación** (tray submenu): the fan and the air conditioners follow the PC.
 
 - *Encender al iniciar Windows*: when the app starts (normally with Windows) it sets Vento to **speed 5** and turns **on** every air conditioner, each as soon as it answers, if that happens within 5 minutes; if a device is off or unreachable, nothing happens (`StartupMode` in the config: fan mode `0`–`7`, or `-1` to disable the whole startup).
 
-- *Apagar al apagar el PC*: when Windows shuts down, restarts or logs off, it turns Vento **off** (over WiFi or Bluetooth, whichever it was using) and the air conditioners **off**, all at once and waiting at most 4 s so shutdown isn't held up (`ShutdownMode` in the config: fan mode `0`–`7`, or `-1` to disable).
+- *Apagar al apagar el PC*: when Windows shuts down, restarts or logs off, it turns Vento **off** and the air conditioners **off**, all at once and waiting at most 4 s so shutdown isn't held up (`ShutdownMode` in the config: fan mode `0`–`7`, or `-1` to disable).
 
 It starts with Windows automatically after the first run (registry `Run` key, no admin needed). Settings are in `%APPDATA%\Vento\config.json`; `Host` must match `DEVICE_HOSTNAME`.
 

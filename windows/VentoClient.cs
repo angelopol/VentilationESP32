@@ -4,34 +4,31 @@ using System.Windows.Threading;
 
 namespace Vento
 {
-    public enum LinkStatus { Connecting, Wifi, Bluetooth, NotPaired, Offline }
+    public enum LinkStatus { Connecting, Wifi, Offline }
 
-    // Mantiene la conexión con Vento: primero http://<host>.local (consulta el estado cada pocos
-    // segundos) y, si no responde, el Bluetooth emparejado, que solo se conecta para cada operación.
-    // Todo corre en el hilo de la interfaz (async/await).
+    // Mantiene la conexión con Vento por WiFi: consulta el estado cada pocos segundos por la última
+    // IP conocida o, si no responde, por http://<host>.local. Todo corre en el hilo de la interfaz
+    // (async/await).
     public sealed class VentoClient : IDisposable
     {
         private static readonly TimeSpan PollInterval = TimeSpan.FromSeconds(3);
-        private static readonly TimeSpan WifiProbeInterval = TimeSpan.FromSeconds(15);
+        private static readonly TimeSpan RetryInterval = TimeSpan.FromSeconds(10);
 
         private readonly Config _config;
         private readonly DispatcherTimer _timer;
-        private ITransport _transport;
+        private HttpTransport _transport;
         private bool _busy;
         private DateTime _nextConnect = DateTime.MinValue;
-        private DateTime _nextWifiProbe = DateTime.MinValue;
         private string _ip;   // última IP conocida: vento.local (mDNS) a veces no resuelve
 
         public VentoState State { get; private set; }
         public LinkStatus Status { get; private set; } = LinkStatus.Connecting;
-        public bool IsConnected => Status == LinkStatus.Wifi || Status == LinkStatus.Bluetooth;
+        public bool IsConnected => Status == LinkStatus.Wifi;
         public string WebUrl => "http://" + _config.Host + ".local";
 
         public static string StatusText(LinkStatus status) => status switch
         {
-            LinkStatus.Wifi => "Conectado por WiFi",
-            LinkStatus.Bluetooth => "Por Bluetooth",
-            LinkStatus.NotPaired => "Sin WiFi y sin emparejar",
+            LinkStatus.Wifi => "Conectado",
             LinkStatus.Offline => "Sin conexión",
             _ => "Conectando…",
         };
@@ -55,35 +52,21 @@ namespace Vento
 
         public Task<bool> SetSetpointAsync(int degrees) => RunAsync(t => t.SetSetpointAsync(degrees));
 
-        // Pide el estado actual (por Bluetooth no se consulta periódicamente)
-        public Task<bool> RefreshAsync() => RunAsync(t => t.GetStateAsync());
-
         // Al apagar Windows: el hilo de la interfaz queda bloqueado esperando, así que la operación
-        // corre en otro hilo con una conexión nueva por el mismo medio que se estaba usando.
+        // corre en otro hilo con una conexión nueva.
         public bool SetModeBlocking(int mode, TimeSpan timeout)
         {
             _timer.Stop();
             if (!IsConnected) return false;
-            string host = _config.Host;
-            string address = _ip ?? host + ".local";
-            bool wifi = Status == LinkStatus.Wifi;
+            string address = _ip ?? _config.Host + ".local";
             var task = Task.Run(async () =>
             {
-                ITransport t = wifi ? new HttpTransport(address)
-                    : BluetoothTransport.FindPaired(host) is ulong addr ? new BluetoothOnDemand(addr) : null;
-                if (t == null) return false;
-                using (t) { await t.SetModeAsync(mode); }
+                using var http = new HttpTransport(address);
+                await http.SetModeAsync(mode);
                 return true;
             });
             try { return task.Wait(timeout) && task.Result; }
             catch { return false; }
-        }
-
-        // Reintenta ya (p. ej. tras emparejar)
-        public Task<bool> ReconnectAsync()
-        {
-            _nextConnect = DateTime.MinValue;
-            return RunAsync(null);
         }
 
         private async Task TickAsync()
@@ -98,17 +81,6 @@ namespace Vento
                     return;
                 }
 
-                // Por Bluetooth no se mantiene la conexión: solo se comprueba si el WiFi ha vuelto
-                if (_transport is BluetoothOnDemand)
-                {
-                    if (DateTime.Now >= _nextWifiProbe)
-                    {
-                        _nextWifiProbe = DateTime.Now + WifiProbeInterval;
-                        await TryWifiAsync();
-                    }
-                    return;
-                }
-
                 try { Update(await _transport.GetStateAsync()); }
                 catch
                 {
@@ -119,14 +91,13 @@ namespace Vento
             finally { _busy = false; }
         }
 
-        private async Task<bool> RunAsync(Func<ITransport, Task<VentoState>> op)
+        private async Task<bool> RunAsync(Func<HttpTransport, Task<VentoState>> op)
         {
             while (_busy) await Task.Delay(50);
             _busy = true;
             try
             {
                 if (_transport == null && !await ConnectAsync()) return false;
-                if (op == null) return true;
                 try
                 {
                     Update(await op(_transport));
@@ -152,51 +123,25 @@ namespace Vento
             finally { _busy = false; }
         }
 
+        // Primero por la última IP conocida y, si no responde, por <host>.local
         private async Task<bool> ConnectAsync()
         {
-            if (await TryWifiAsync()) return true;
-
-            ulong? address = BluetoothTransport.FindPaired(_config.Host);
-            if (address == null)
-            {
-                SetStatus(LinkStatus.NotPaired);
-                _nextConnect = DateTime.Now.AddSeconds(10);
-                return false;
-            }
-
-            if (Status != LinkStatus.Offline) SetStatus(LinkStatus.Connecting);
-            try
-            {
-                // Una consulta para comprobar que responde; luego se desconecta
-                var bt = new BluetoothOnDemand(address.Value);
-                var state = await bt.GetStateAsync();
-                Replace(bt, LinkStatus.Bluetooth);
-                _nextWifiProbe = DateTime.Now + WifiProbeInterval;
-                Update(state);
-                return true;
-            }
-            catch
-            {
-                SetStatus(LinkStatus.Offline);
-                _nextConnect = DateTime.Now.AddSeconds(15);
-                return false;
-            }
+            if (_ip != null && await TryConnectAsync(_ip)) return true;
+            if (await TryConnectAsync(_config.Host + ".local")) return true;
+            SetStatus(LinkStatus.Offline);
+            _nextConnect = DateTime.Now + RetryInterval;
+            return false;
         }
 
-        // Primero por la última IP conocida y, si no responde, por <host>.local
-        private async Task<bool> TryWifiAsync()
-        {
-            if (_ip != null && await TryWifiAsync(_ip)) return true;
-            return await TryWifiAsync(_config.Host + ".local");
-        }
-
-        private async Task<bool> TryWifiAsync(string address)
+        private async Task<bool> TryConnectAsync(string address)
         {
             var http = new HttpTransport(address);
             try
             {
                 var state = await http.GetStateAsync();
-                Replace(http, LinkStatus.Wifi);
+                _transport?.Dispose();
+                _transport = http;
+                SetStatus(LinkStatus.Wifi);
                 Update(state);
                 return true;
             }
@@ -205,13 +150,6 @@ namespace Vento
                 http.Dispose();
                 return false;
             }
-        }
-
-        private void Replace(ITransport transport, LinkStatus status)
-        {
-            if (!ReferenceEquals(_transport, transport)) _transport?.Dispose();
-            _transport = transport;
-            SetStatus(status);
         }
 
         private void Drop()

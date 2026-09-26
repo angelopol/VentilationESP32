@@ -13,11 +13,6 @@
 // #define AP_SSID     "Vento"
 // #define AP_PASSWORD "vento1234"
 
-// Opcional: sin Bluetooth. WiFi y Bluetooth comparten la radio del ESP32 y con Bluetooth
-// activo el WiFi no puede dejar de dormir entre balizas: la web y vento.local responden peor.
-// Sin Bluetooth, la app de Windows solo usa WiFi.
-// #define DISABLE_BLUETOOTH
-
 // Opcional: aires acondicionados Tuya controlados por la red local (uno o varios).
 // id y key (local_key, 16 caracteres) salen de "python -m tinytuya wizard".
 // version: "auto" prueba 3.3, 3.4 y 3.5 la primera vez (o pon la que muestre el scan).

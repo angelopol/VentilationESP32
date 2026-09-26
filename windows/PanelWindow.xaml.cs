@@ -47,8 +47,6 @@ namespace Vento
                                              Math.Min(Top, SystemParameters.WorkArea.Bottom - ActualHeight));
             };
             Refresh();
-            // Por Bluetooth el estado no se actualiza solo: se pide al abrir la ventana
-            if (_client.Status == LinkStatus.Bluetooth) _ = _client.RefreshAsync();
         }
 
         private void Refresh()

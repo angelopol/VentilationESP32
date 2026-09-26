@@ -11,8 +11,8 @@
 // 3.3 cifra con AES-ECB y la local_key; 3.4 y 3.5 negocian antes una clave de sesion.
 
 static const uint16_t TUYA_PORT = 6668;
-// Con la radio compartida con el Bluetooth un paquete perdido cuesta segundos (el primer
-// reintento de TCP llega a los 3 s): margen suficiente para no dar al aire por perdido
+// Un paquete perdido cuesta segundos (el primer reintento de TCP llega a los 3 s): margen
+// suficiente para no dar al aire por perdido por un fallo puntual de la red
 static const uint32_t CONNECT_TIMEOUT_MS = 5000;
 static const uint32_t READ_TIMEOUT_MS = 4000;
 static const size_t MAX_MESSAGE = 4096;

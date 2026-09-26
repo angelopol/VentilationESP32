@@ -224,7 +224,7 @@ void acSetup()
   }
 
   if (!devices.empty())
-    // Nucleo 1 (el del loop): el 0 queda para WiFi, Bluetooth y mDNS
+    // Nucleo 1 (el del loop): el 0 queda para WiFi y mDNS
     xTaskCreatePinnedToCore(acTask, "aircon", 10240, nullptr, 1, nullptr, 1);
 }
 

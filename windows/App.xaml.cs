@@ -108,9 +108,6 @@ namespace Vento
             _webItem.Click += (s, a) => OpenUrl(_client.WebUrl);
             menu.Items.Add(_webItem);
 
-            var pairItem = new WinForms.ToolStripMenuItem("Emparejar por Bluetooth…");
-            pairItem.Click += (s, a) => OpenPairing();
-            menu.Items.Add(pairItem);
 
             _startItem = new WinForms.ToolStripMenuItem("Iniciar con Windows") { CheckOnClick = true };
             _startItem.CheckedChanged += (s, a) =>
@@ -183,7 +180,6 @@ namespace Vento
             {
                 tip += " · " + VentoState.ModeName(state.Mode);
                 if (state.Hic.HasValue) tip += " · " + state.Hic.Value.ToString("0.0", CultureInfo.CurrentCulture) + "°";
-                tip += _client.Status == LinkStatus.Wifi ? " · WiFi" : " · Bluetooth";
             }
             else
             {
@@ -324,21 +320,9 @@ namespace Vento
             _panel.Show();
         }
 
-        // ------------------------------------------------------------ pairing
-        // Solo cuando el usuario pulsa una opción sin conexión (o desde el menú):
-        // si Vento está apagado al arrancar no se muestra nada.
-        private void OpenPairing()
-        {
-            OpenUrl("ms-settings:bluetooth");
-            Notify($"Vento no responde por WiFi. Empareja «{_config.Host}» en Bluetooth " +
-                   "(Agregar dispositivo → Bluetooth) y la app lo usará automáticamente.");
-            _ = _client.ReconnectAsync();
-        }
-
         private void NotifyUnavailable()
         {
-            if (_client.Status == LinkStatus.NotPaired) OpenPairing();
-            else Notify("No se pudo conectar con Vento por WiFi ni por Bluetooth.");
+            Notify($"No se pudo conectar con Vento. Comprueba que está encendido y en la misma red WiFi ({_client.WebUrl}).");
         }
 
         // -------------------------------------------------------------- helpers

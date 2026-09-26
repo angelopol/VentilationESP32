@@ -2,7 +2,7 @@ using System.Text.Json;
 
 namespace Vento
 {
-    // Estado que devuelve el ESP32 (/api/state por WiFi, comando '?' por Bluetooth)
+    // Estado que devuelve el ESP32 (/api/state)
     public sealed class VentoState
     {
         public int Mode { get; private set; }
@@ -11,7 +11,7 @@ namespace Vento
         public double? Temp { get; private set; }
         public double? Hum { get; private set; }
         public double? Hic { get; private set; }
-        // IP de Vento en la red (solo por WiFi, en /api/state)
+        // IP de Vento en la red
         public string Ip { get; private set; }
 
         public static VentoState Parse(string json)

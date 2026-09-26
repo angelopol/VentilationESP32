@@ -5,8 +5,6 @@
 #include <Preferences.h>
 #include <esp_arduino_version.h>
 #include <esp_system.h>
-#include "BluetoothSerial.h"
-#include "esp_coexist.h"
 #include "DHT.h"
 
 #include "secrets.h"   // WIFI_SSID, WIFI_PASSWORD, DEVICE_HOSTNAME, AC_DEVICES_JSON (ver secrets.example.h)
@@ -24,10 +22,6 @@ struct WifiCred { String ssid; String pass; };
 #endif
 #ifndef AP_PASSWORD
 #define AP_PASSWORD "vento1234"
-#endif
-
-#if !defined(CONFIG_BT_ENABLED) || !defined(CONFIG_BLUEDROID_ENABLED)
-#error Bluetooth no esta habilitado para esta placa
 #endif
 
 #ifndef ESP_ARDUINO_VERSION_MAJOR
@@ -79,8 +73,7 @@ const unsigned long CONNECT_TIMEOUT = 15000;      // tiempo maximo por intento d
 const unsigned long AP_AFTER_DISCONNECT = 30000;  // sin router este tiempo -> se abre la red propia
 const unsigned long AP_RETRY_INTERVAL = 60000;    // con red propia activa, reintenta el router
 const unsigned long AP_LINGER = 30000;            // tras conectar, mantiene la red propia un poco
-const unsigned long BT_SEND_INTERVAL = 500;   // envio de la sensacion termica por Bluetooth
-unsigned long lastSensor = 0, lastBlink = 0, lastBtSend = 0;
+unsigned long lastSensor = 0, lastBlink = 0;
 bool blinkOn = false;
 
 WifiCred creds[2];              // red guardada desde el portal y la de secrets.h
@@ -99,7 +92,6 @@ Preferences prefs;
 
 DHT dht(DHTPIN, DHTTYPE);
 WebServer server(80);
-BluetoothSerial SerialBT;
 
 // ---------- Ventilador ----------
 
@@ -184,17 +176,6 @@ void setSetpoint(long value)
   tmp = 16 + ((value - 16 + 1) / 3) * 3;   // redondea al paso de 3 mas cercano
   Serial.printf("Temperatura objetivo: %ld\n", tmp);
   updateFan();
-}
-
-// Protocolo de un caracter (Bluetooth y monitor serie):
-// '0'-'7' cambian de modo, 'a'-'s' fijan la temperatura 16..70
-void handleCommand(char c)
-{
-  if (c >= '0' && c <= '7') {
-    setMode(c - '0');
-  } else if (c >= 'a' && c <= 's') {
-    setSetpoint(16 + (c - 'a') * 3);
-  }
 }
 
 void readSensor()
@@ -310,7 +291,7 @@ void wifiSetup()
   WiFi.setHostname(DEVICE_HOSTNAME);
   WiFi.mode(WIFI_STA);
   WiFi.setAutoReconnect(true);
-  WiFi.setSleep(false);
+  WiFi.setSleep(false);   // WiFi siempre despierto: responde antes y mDNS (vento.local) no falla
   loadCreds();
   startNextAttempt();
 }
@@ -648,57 +629,18 @@ void setup()
   Serial.printf("Arranque. Motivo del ultimo reinicio: %s\n", resetReason());
   dht.begin();
 
-#ifndef DISABLE_BLUETOOTH
-  SerialBT.begin(DEVICE_HOSTNAME);   // mismo nombre que en la red
-  // WiFi y Bluetooth comparten la radio: la web y los aires van por WiFi, que tenga preferencia
-  esp_coex_preference_set(ESP_COEX_PREFER_WIFI);
-  Serial.printf("Bluetooth activo como \"%s\"\n", DEVICE_HOSTNAME);
-#else
-  Serial.println(F("Bluetooth desactivado (DISABLE_BLUETOOTH)"));
-#endif
-
   wifiSetup();
   configTime(0, 0, "pool.ntp.org");   // hora para los mensajes a los aires Tuya
   acSetup();
   webSetup();
 }
 
-// Bluetooth: recibe comandos y, en los modos 6 y 7, envia la sensacion termica como en la version original
-void btLoop()
-{
-  while (SerialBT.available()) {
-    char c = SerialBT.read();
-    if (c == '\n' || c == '\r') continue;
-    if (c == '?') {                    // consulta de estado: responde con el mismo JSON que /api/state
-      SerialBT.println(stateJson());
-      continue;
-    }
-    Serial.printf("BT: %c\n", c);
-    handleCommand(c);
-  }
-
-  if (fanMode >= 6 && hasReading && SerialBT.hasClient()
-      && millis() - lastBtSend >= BT_SEND_INTERVAL) {
-    lastBtSend = millis();
-    SerialBT.println(hic);
-  }
-}
 
 void loop()
 {
   server.handleClient();
   wifiLoop();
-#ifndef DISABLE_BLUETOOTH
-  btLoop();
-#endif
   fanLoop();
-
-  while (Serial.available()) {
-    char c = Serial.read();
-    if (c == '\n' || c == '\r') continue;
-    Serial.println(c);
-    handleCommand(c);
-  }
 
   if (millis() - lastSensor >= SENSOR_INTERVAL || lastSensor == 0) {
     lastSensor = millis();
