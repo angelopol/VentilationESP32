@@ -1,7 +1,10 @@
 using System;
+using System.Collections.Generic;
 using System.Diagnostics;
+using System.Linq;
 using System.Globalization;
 using System.Threading;
+using System.Threading.Tasks;
 using System.Windows;
 using Drawing = System.Drawing;
 using WinForms = System.Windows.Forms;
@@ -19,6 +22,7 @@ namespace Vento
         private Mutex _mutex;
         private Config _config;
         private VentoClient _client;
+        private List<AirConditioner> _acs;
         private WinForms.NotifyIcon _tray;
         private Drawing.Icon _iconOn, _iconOff;
         private PanelWindow _panel;
@@ -43,10 +47,19 @@ namespace Vento
             _client = new VentoClient(_config);
             _client.Changed += RefreshTray;
             _client.Changed += ApplyStartupMode;
+            _acs = _config.AirConditioners.Where(c => c != null && c.IsValid())
+                                          .Select(c => new AirConditioner(c)).ToList();
 
             SetupTray();
             _client.Start();
+            if (_config.StartupMode >= 0)
+                foreach (var ac in _acs) _ = TurnOnAtStartupAsync(ac);
             SessionEnding += (s, a) => ApplyShutdownMode();
+
+            if (_config.LoadFailed)
+                Notify("config.json tiene un error y no se pudo leer. Corrígelo y reinicia Vento.");
+            else if (_acs.Count < _config.AirConditioners.Count)
+                Notify("Algún aire de config.json no tiene id, ip o una key de 16 caracteres y se ignoró.");
 
             // Inicio con Windows activado la primera vez; luego lo decide el menú.
             if (!_config.AutostartSetup && Autostart.Enable())
@@ -85,6 +98,12 @@ namespace Vento
             menu.Items.Add(autoItem);
             menu.Items.Add(new WinForms.ToolStripSeparator());
 
+            if (_acs.Count > 0)
+            {
+                foreach (var ac in _acs) menu.Items.Add(AcMenu(ac));
+                menu.Items.Add(new WinForms.ToolStripSeparator());
+            }
+
             _webItem = new WinForms.ToolStripMenuItem("Abrir panel web");
             _webItem.Click += (s, a) => OpenUrl(_client.WebUrl);
             menu.Items.Add(_webItem);
@@ -101,23 +120,32 @@ namespace Vento
             };
             menu.Items.Add(_startItem);
 
-            _startupModeItem = new WinForms.ToolStripMenuItem("Nivel 5 al iniciar")
-            { Checked = _config.StartupMode >= 0, CheckOnClick = true };
+            // Sistema de ventilación: el ventilador y los aires se encienden con Windows y se apagan con el PC
+            var systemItem = new WinForms.ToolStripMenuItem("Sistema de ventilación");
+            _startupModeItem = new WinForms.ToolStripMenuItem("Encender al iniciar Windows")
+            {
+                Checked = _config.StartupMode >= 0, CheckOnClick = true,
+                ToolTipText = _acs.Count > 0 ? "Ventilador en nivel 5 y aires encendidos" : "Ventilador en nivel 5",
+            };
             _startupModeItem.CheckedChanged += (s, a) =>
             {
                 _config.StartupMode = _startupModeItem.Checked ? 5 : -1;
                 _config.Save();
             };
-            menu.Items.Add(_startupModeItem);
+            systemItem.DropDownItems.Add(_startupModeItem);
 
             _shutdownModeItem = new WinForms.ToolStripMenuItem("Apagar al apagar el PC")
-            { Checked = _config.ShutdownMode >= 0, CheckOnClick = true };
+            {
+                Checked = _config.ShutdownMode >= 0, CheckOnClick = true,
+                ToolTipText = _acs.Count > 0 ? "Apaga el ventilador y los aires" : "Apaga el ventilador",
+            };
             _shutdownModeItem.CheckedChanged += (s, a) =>
             {
                 _config.ShutdownMode = _shutdownModeItem.Checked ? 0 : -1;
                 _config.Save();
             };
-            menu.Items.Add(_shutdownModeItem);
+            systemItem.DropDownItems.Add(_shutdownModeItem);
+            menu.Items.Add(systemItem);
 
             menu.Items.Add(new WinForms.ToolStripSeparator());
             var exitItem = new WinForms.ToolStripMenuItem("Salir");
@@ -127,6 +155,7 @@ namespace Vento
             menu.Opening += (s, a) =>
             {
                 RefreshTray();
+                foreach (var ac in _acs) _ = ac.RefreshAsync();
                 _startItem.Checked = Autostart.IsEnabled();
             };
 
@@ -163,6 +192,76 @@ namespace Vento
             _tray.Text = tip.Length > 63 ? tip.Substring(0, 63) : tip;
         }
 
+        // Submenú de un aire: encendido, temperatura, modo y ventilador
+        private WinForms.ToolStripMenuItem AcMenu(AirConditioner ac)
+        {
+            var root = new WinForms.ToolStripMenuItem(ac.Name);
+            var cfg = ac.Config;
+
+            async void Run(System.Threading.Tasks.Task<bool> op)
+            {
+                if (!await op) Notify($"No se pudo contactar con «{ac.Name}»: {ac.Error}");
+            }
+
+            var power = new WinForms.ToolStripMenuItem("Encendido");
+            power.Click += (s, a) => Run(ac.SetPowerAsync(!ac.Power));
+            root.DropDownItems.Add(power);
+
+            var temp = new WinForms.ToolStripMenuItem("Objetivo") { Enabled = false };
+            var up = new WinForms.ToolStripMenuItem($"Subir {cfg.Step:0.#}°");
+            up.Click += (s, a) => Run(ac.SetSetpointAsync((ac.Setpoint ?? cfg.Min) + cfg.Step));
+            var down = new WinForms.ToolStripMenuItem($"Bajar {cfg.Step:0.#}°");
+            down.Click += (s, a) => Run(ac.SetSetpointAsync((ac.Setpoint ?? cfg.Min) - cfg.Step));
+            if (cfg.Dps.Setpoint > 0)
+            {
+                root.DropDownItems.Add(new WinForms.ToolStripSeparator());
+                root.DropDownItems.AddRange(new WinForms.ToolStripItem[] { temp, up, down });
+            }
+
+            var modes = new Dictionary<string, WinForms.ToolStripMenuItem>();
+            var fans = new Dictionary<string, WinForms.ToolStripMenuItem>();
+            void AddOptions(int dp, IEnumerable<KeyValuePair<string, string>> options,
+                            Dictionary<string, WinForms.ToolStripMenuItem> items, Func<string, System.Threading.Tasks.Task<bool>> set)
+            {
+                if (dp <= 0 || !options.Any()) return;
+                root.DropDownItems.Add(new WinForms.ToolStripSeparator());
+                foreach (var kv in options)
+                {
+                    string value = kv.Key;
+                    var item = new WinForms.ToolStripMenuItem(kv.Value);
+                    item.Click += (s, a) => Run(set(value));
+                    items[value] = item;
+                    root.DropDownItems.Add(item);
+                }
+            }
+            AddOptions(cfg.Dps.Mode, cfg.Modes, modes, ac.SetModeAsync);
+            AddOptions(cfg.Dps.Fan, cfg.Fans, fans, v => ac.SetFanAsync(v));
+
+            var toggles = new Dictionary<int, WinForms.ToolStripMenuItem>();
+            foreach (var (dp, name) in ac.Toggles())
+            {
+                if (toggles.Count == 0) root.DropDownItems.Add(new WinForms.ToolStripSeparator());
+                var item = new WinForms.ToolStripMenuItem(name);
+                item.Click += (s, a) => Run(ac.SetToggleAsync(dp, !ac.IsToggleOn(dp)));
+                toggles[dp] = item;
+                root.DropDownItems.Add(item);
+            }
+
+            void Refresh()
+            {
+                root.Text = ac.Name + " · " + ac.Summary();
+                power.Checked = ac.Power;
+                temp.Text = "Objetivo: " + (ac.Setpoint.HasValue ? ac.FormatTemp(ac.Setpoint.Value) : "--°") +
+                            (ac.Temp.HasValue ? " · ambiente " + ac.Temp.Value.ToString("0.#", CultureInfo.CurrentCulture) + "°" : "");
+                foreach (var kv in modes) kv.Value.Checked = kv.Key == ac.Mode;
+                foreach (var kv in fans) kv.Value.Checked = kv.Key == ac.Fan;
+                foreach (var kv in toggles) kv.Value.Checked = ac.IsToggleOn(kv.Key);
+            }
+            ac.Changed += Refresh;
+            Refresh();
+            return root;
+        }
+
         // Al iniciar (normalmente con Windows) pone el modo configurado en cuanto hay conexión
         private void ApplyStartupMode()
         {
@@ -174,13 +273,37 @@ namespace Vento
             _ = _client.SetModeAsync(mode);
         }
 
-        // Al apagar Windows o cerrar sesión pone el modo configurado (por defecto, apagado)
+        // Sistema de ventilación al iniciar: enciende cada aire en cuanto responde, si eso pasa
+        // dentro de StartupModeWindow (como el nivel del ventilador)
+        private async Task TurnOnAtStartupAsync(AirConditioner ac)
+        {
+            while (DateTime.Now - _startedAt < StartupModeWindow)
+            {
+                await ac.RefreshAsync();
+                if (ac.Online)
+                {
+                    if (!ac.Power) await ac.SetPowerAsync(true);
+                    return;
+                }
+                await Task.Delay(TimeSpan.FromSeconds(30));
+            }
+        }
+
+        // Al apagar Windows o cerrar sesión: el ventilador pasa al modo configurado (por defecto,
+        // apagado) y los aires se apagan, todo a la vez y sin pasar de ShutdownModeTimeout
         private void ApplyShutdownMode()
         {
             int mode = _config.ShutdownMode;
             if (mode < 0 || mode > 7) return;
-            if (_client.State != null && _client.State.Mode == mode) return;
-            _client.SetModeBlocking(mode, ShutdownModeTimeout);
+            var deadline = DateTime.Now + ShutdownModeTimeout;
+            var acs = _acs.Select(ac => ac.SetPowerDetachedAsync(false)).ToArray();
+            if (_client.State == null || _client.State.Mode != mode)
+                _client.SetModeBlocking(mode, ShutdownModeTimeout);
+            var left = deadline - DateTime.Now;
+            if (acs.Length > 0 && left > TimeSpan.Zero)
+            {
+                try { Task.WaitAll(acs, left); } catch { }
+            }
         }
 
         // ---------------------------------------------------------------- panel
@@ -195,7 +318,7 @@ namespace Vento
         private void ShowPanel()
         {
             if (_panel != null) { _panel.Activate(); return; }
-            _panel = new PanelWindow(_client);
+            _panel = new PanelWindow(_client, _acs);
             _panel.Unavailable += NotifyUnavailable;
             _panel.Closed += (s, a) => { _panel = null; _panelClosedAt = DateTime.Now; };
             _panel.Show();

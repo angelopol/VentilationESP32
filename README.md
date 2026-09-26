@@ -1,12 +1,12 @@
 # Vento – Ventilation Control System with ESP32
 
-An ESP32 connects to your WiFi network and serves a local web app (installable as a PWA on iPhone) to control a fan and LEDs based on the temperature and humidity measured by a DHT11 sensor.
+An ESP32 connects to your WiFi network and serves a local web app (installable as a PWA on iPhone) to control a fan and LEDs based on the temperature and humidity measured by a DHT11 sensor. It can also control **Tuya air conditioners** on the same network (see [Air conditioners](#air-conditioners-tuya)).
 
 ![image](https://github.com/user-attachments/assets/a596511f-6e45-47b3-971b-50e81033e8c6)
 
 ## Setup
 
-1. Install the **ESP32** board package and the **DHT sensor library** (Adafruit) in the Arduino IDE.
+1. Install the **ESP32** board package, the **DHT sensor library** (Adafruit) and **ArduinoJson** (v7, by Benoit Blanchon) in the Arduino IDE.
 2. Open `Vent/Vent.ino` in the Arduino IDE. Copy `Vent/secrets.example.h` to `Vent/secrets.h` and fill in your WiFi SSID and password (`secrets.h` is git-ignored). If they are wrong, you can set the network from the phone instead (see below).
 3. Check `FAN_PIN` in `Vent/Vent.ino` matches the pin wired to the fan driver.
 4. In **Tools → Partition Scheme** select **"Huge APP (3MB No OTA/1MB SPIFFS)"**. WiFi and Bluetooth together don't fit in the default 1.2 MB app partition.
@@ -51,17 +51,48 @@ The fan keeps working in its current mode while WiFi is down.
 
 The target temperature ranges from 16 °C to 70 °C in steps of 3.
 
+## Air conditioners (Tuya)
+
+Vento controls Tuya / Smart Life air conditioners directly over the local network (Tuya protocol 3.3, 3.4 and 3.5, the same one `tinytuya` uses). No cloud, no extra server: the ESP32 talks to them and the web app shows one card per air conditioner with room temperature, power, target temperature (− / +), mode and fan speed. The Windows app controls them too.
+
+1. Get each device's `id` and `local_key` with [tinytuya](https://github.com/jasonacox/tinytuya): `python -m tinytuya wizard` (needs a free iot.tuya.com project linked to your Smart Life account; its Access ID / Secret are only needed for this step). The protocol `version` can be left as `"auto"`: the first time, Vento tries 3.3, 3.4 and 3.5 and keeps the one that answers (`/api/ac/raw` shows which one; writing it in the config skips the detection).
+2. Give the air conditioner a **fixed IP** in the router.
+3. Add it to `AC_DEVICES_JSON` in `Vent/secrets.h` (see `secrets.example.h`); several devices go in the same list. Only `name`, `id`, `key` and `ip` are required.
+4. Flash, open `http://vento.local/api/ac/raw?d=0` (`d` is the device index) and change things from the remote or the Smart Life app to see which **DP** is which. The defaults are the usual ones for Tuya air conditioners (category `kt`): `1` power, `2` target temperature, `3` room temperature, `4` mode, `5` fan speed. Adjust `dps`, `modes`, `fans` and `scale` (`10` if the device sends `240` for 24.0 °C) if yours differ; `0` hides a DP the model doesn't have.
+
+```json
+{ "name": "Aire", "id": "bf0123…", "key": "0123456789abcdef", "ip": "192.168.1.50", "version": "auto",
+  "dps": { "power": 1, "setpoint": 2, "temp": 3, "mode": 4, "fan": 5 },
+  "scale": 1, "min": 16, "max": 31, "step": 1,
+  "modes": { "cold": "Frío", "wet": "Seco", "wind": "Ventilador", "hot": "Calor", "auto": "Auto" },
+  "fans": { "low": "Baja", "mid": "Media", "high": "Alta", "auto": "Auto" },
+  "toggles": { "15": "Oscilación", "101": "Sueño" } }
+```
+
+`toggles` adds on/off buttons for any other boolean DP (swing, sleep, child lock…). Some manufacturers use their own values instead of the `kt` defaults (for example `Cool` / `Dyr` / `Fan` and `Low` / `High`) and extra DPs that the standard spec doesn't list; the full model with every DP comes from the Tuya API at `/v2.0/cloud/thing/<id>/model` (e.g. `tinytuya.Cloud(...).cloudrequest(...)`).
+
+Air conditioners take a few seconds to apply a command. Until the device reports the new value (at most 15 s), Vento keeps showing the requested one, so the UI doesn't bounce back and forth; if the device never applies it, the real state comes back after those 15 s.
+
+The ESP32 only polls the air conditioners (every 5 s) while someone has the app open, and each exchange opens and closes its own connection, because many Tuya devices accept only one local connection at a time. Commands are sent from a background task, so a slow or unplugged device never blocks the fan or the web server. The Smart Life app and the remote keep working as usual.
+
 ## HTTP API
 
 | Method | Path | Description |
 |--------|------|-------------|
-| GET  | `/api/state` | `{mode, setpoint, pwm, temp, hum, hic, rssi}` |
+| GET  | `/api/state` | `{mode, setpoint, pwm, temp, hum, hic, rssi, up, heap, minHeap, reset}`; `?ac=1` adds `acs` (same as `/api/ac`), which the web app uses so it only makes one request at a time |
 | POST | `/api/mode?v=0..7` | Change mode |
 | POST | `/api/setpoint?v=16..70` | Change target temperature |
 | GET  | `/api/wifi/status` | WiFi / setup-mode status |
 | GET  | `/api/wifi/scan` | Nearby networks (asynchronous, poll until `scanning` is false) |
 | POST | `/api/wifi` (`ssid`, `pass`) | Try a network; saved only if it connects |
 | POST | `/api/wifi/forget` | Forget the saved network |
+| GET  | `/api/ac` | Air conditioners: `{devices: [{name, online, error, power, setpoint, temp, mode, fan, min, max, step, modes, fans, toggles: [{dp, name, on}]}]}` |
+| POST | `/api/ac/power?d=<i>&v=0\|1` | Turn air conditioner `i` off / on |
+| POST | `/api/ac/temp?d=<i>&v=<°C>` | Target temperature (clamped to `min`..`max`) |
+| POST | `/api/ac/mode?d=<i>&v=<mode>` | One of the configured `modes` keys |
+| POST | `/api/ac/fan?d=<i>&v=<speed>` | One of the configured `fans` keys |
+| POST | `/api/ac/toggle?d=<i>&v=<dp>:<0\|1>` | Turn one of the configured `toggles` off / on |
+| GET  | `/api/ac/raw?d=<i>` | Raw DPS as reported by the device, to find out what each one is |
 
 ## Bluetooth
 
@@ -73,6 +104,8 @@ Vento is also a Bluetooth Classic (SPP) device named after `DEVICE_HOSTNAME` (`v
 
 In modes 6 and 7 it sends back the heat index as a text line every 500 ms, like the original Bluetooth version. The same commands also work through the serial monitor.
 
+WiFi and Bluetooth share the ESP32's radio. With Bluetooth on, WiFi is never allowed to stay awake between beacons, so it answers more slowly and multicast (`vento.local` / mDNS) is less reliable; Vento gives WiFi priority, and the web app switches to Vento's IP as soon as it knows it. If the web app or `vento.local` still stall, add `#define DISABLE_BLUETOOTH` to `secrets.h`: the Windows app then only uses WiFi.
+
 ## Windows app
 
 `windows/` contains a tray app (.NET 9, WPF):
@@ -80,12 +113,15 @@ In modes 6 and 7 it sends back the heat index as a text line every 500 ms, like 
 - **Right-click** the tray icon: Off and speeds 1–5 (the current one is checked), web panel, Bluetooth pairing, *Start with Windows*.
 - **Left-click**: a small window with the heat index, **Auto** / **Progresivo** and the target temperature.
 - The icon turns grey when Vento isn't reachable.
+- **Air conditioners:** each one has its own submenu (power, target temperature, mode, fan) and its own block in the left-click window. Add them to `AirConditioners` in `%APPDATA%\Vento\config.json` with the same JSON as in `AC_DEVICES_JSON` (the Windows app talks to them directly, so it works even if the ESP32 is off). They're only polled while the window is open or the menu is shown. A `config.json` with a syntax error is never overwritten: the app says so and uses the defaults until it's fixed.
 
 It connects to `http://vento.local` and falls back to Bluetooth when WiFi doesn't answer. Bluetooth is used on demand: each action connects, sends the command, reads the new state and disconnects, so Bluetooth stays free for the phone. It keeps checking WiFi and switches back as soon as it answers. If you pick an option while Vento isn't reachable over WiFi and isn't paired, it opens Windows' Bluetooth settings so you can pair `vento`. When nothing is clicked it stays silent: if Vento is off when the PC starts, no errors or windows appear.
 
-When the app starts (normally with Windows) it sets Vento to **speed 5** as soon as it reaches it, if that happens within 5 minutes; if Vento is off, nothing happens. The *Nivel 5 al iniciar* menu option turns this off (`StartupMode` in the config: `0`–`7`, or `-1` to disable).
+**Sistema de ventilación** (tray submenu): the fan and the air conditioners follow the PC.
 
-When Windows shuts down, restarts or logs off, it turns Vento **off** (over WiFi or Bluetooth, whichever it was using, waiting at most 4 s so shutdown isn't held up). The *Apagar al apagar el PC* menu option turns this off (`ShutdownMode` in the config: `0`–`7`, or `-1` to disable).
+- *Encender al iniciar Windows*: when the app starts (normally with Windows) it sets Vento to **speed 5** and turns **on** every air conditioner, each as soon as it answers, if that happens within 5 minutes; if a device is off or unreachable, nothing happens (`StartupMode` in the config: fan mode `0`–`7`, or `-1` to disable the whole startup).
+
+- *Apagar al apagar el PC*: when Windows shuts down, restarts or logs off, it turns Vento **off** (over WiFi or Bluetooth, whichever it was using) and the air conditioners **off**, all at once and waiting at most 4 s so shutdown isn't held up (`ShutdownMode` in the config: fan mode `0`–`7`, or `-1` to disable).
 
 It starts with Windows automatically after the first run (registry `Run` key, no admin needed). Settings are in `%APPDATA%\Vento\config.json`; `Host` must match `DEVICE_HOSTNAME`.
 
@@ -100,5 +136,7 @@ The Arduino sketch lives in `Vent/` (the IDE requires the folder to share the `.
 - `Vent/Vent.ino` – firmware (WiFi, web server, fan/LED control).
 - `Vent/web_ui.h` – the web app HTML, CSS and PWA manifest.
 - `Vent/icons.h` – embedded PNG icons, generated by `tools/make_icons.py`.
-- `Vent/secrets.example.h` – template for WiFi credentials and the setup network.
-- `windows/` – Windows tray app; `windows/vento.ico` is also generated by `tools/make_icons.py`.
+- `Vent/secrets.example.h` – template for WiFi credentials, the setup network and the air conditioners.
+- `Vent/tuya.h` / `Vent/tuya.cpp` – Tuya local protocol client (3.3 / 3.4 / 3.5).
+- `Vent/aircon.h` / `Vent/aircon.cpp` – air conditioner list, background polling and `/api/ac` state.
+- `windows/` – Windows tray app; `windows/vento.ico` is also generated by `tools/make_icons.py`. `Tuya.cs`, `AirConditioner.cs` and `AcSection.cs` are the air conditioner client, state and panel block.

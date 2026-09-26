@@ -11,6 +11,8 @@ namespace Vento
         public double? Temp { get; private set; }
         public double? Hum { get; private set; }
         public double? Hic { get; private set; }
+        // IP de Vento en la red (solo por WiFi, en /api/state)
+        public string Ip { get; private set; }
 
         public static VentoState Parse(string json)
         {
@@ -24,6 +26,8 @@ namespace Vento
                 Temp = Num(r, "temp"),
                 Hum = Num(r, "hum"),
                 Hic = Num(r, "hic"),
+                Ip = r.TryGetProperty("ip", out var ip) && ip.ValueKind == JsonValueKind.String &&
+                     ip.GetString().Length > 0 ? ip.GetString() : null,
             };
         }
 

@@ -4,11 +4,14 @@
 #include <DNSServer.h>
 #include <Preferences.h>
 #include <esp_arduino_version.h>
+#include <esp_system.h>
 #include "BluetoothSerial.h"
+#include "esp_coexist.h"
 #include "DHT.h"
 
-#include "secrets.h"   // WIFI_SSID, WIFI_PASSWORD, DEVICE_HOSTNAME (ver secrets.example.h)
+#include "secrets.h"   // WIFI_SSID, WIFI_PASSWORD, DEVICE_HOSTNAME, AC_DEVICES_JSON (ver secrets.example.h)
 #include "web_ui.h"
+#include "aircon.h"
 #include "icons.h"
 
 // Definido antes de cualquier funcion: el IDE inserta los prototipos automaticos
@@ -440,7 +443,32 @@ String stateJson()
 void sendState()
 {
   server.sendHeader("Cache-Control", "no-store");
+  server.sendHeader("Access-Control-Allow-Origin", "*");
   server.send(200, "application/json", stateJson());
+}
+
+const char *resetReason()
+{
+  switch (esp_reset_reason()) {
+    case ESP_RST_POWERON:  return "encendido";
+    case ESP_RST_EXT:      return "boton reset";
+    case ESP_RST_SW:       return "software";
+    case ESP_RST_PANIC:    return "error (panic)";
+    case ESP_RST_INT_WDT:  return "watchdog de interrupciones";
+    case ESP_RST_TASK_WDT: return "watchdog de tareas";
+    case ESP_RST_WDT:      return "watchdog";
+    case ESP_RST_BROWNOUT: return "bajada de tension";
+    default:               return "otro";
+  }
+}
+
+// La web, una vez sabe la IP, llama a la API por IP en vez de por vento.local (mDNS a veces
+// no resuelve): es otro origen, de ahi la cabecera CORS
+void sendJson(int code, const String &json)
+{
+  server.sendHeader("Cache-Control", "no-store");
+  server.sendHeader("Access-Control-Allow-Origin", "*");
+  server.send(code, "application/json", json);
 }
 
 void sendIcon(const uint8_t *data, size_t len)
@@ -526,7 +554,30 @@ void webSetup()
   server.on("/icon-192.png", HTTP_GET, []() { sendIcon(ICON_192, ICON_192_len); });
   server.on("/icon-512.png", HTTP_GET, []() { sendIcon(ICON_512, ICON_512_len); });
 
-  server.on("/api/state", HTTP_GET, sendState);
+  // ?ac=1 (la web): incluye los aires, asi la pagina hace una sola consulta periodica.
+  // La app de Windows no lo pide para no mantener activo el sondeo de los aires.
+  server.on("/api/state", HTTP_GET, []() {
+    String json = stateJson();
+    json.remove(json.length() - 1);
+    // Diagnostico: si Vento se reinicia, "up" vuelve a 0 y "reset" dice por que
+    json += ",\"up\":";
+    json += millis() / 1000;
+    json += ",\"heap\":";
+    json += ESP.getFreeHeap();
+    json += ",\"minHeap\":";
+    json += ESP.getMinFreeHeap();
+    json += ",\"reset\":\"";
+    json += resetReason();
+    json += "\",\"ip\":\"";
+    json += WiFi.status() == WL_CONNECTED ? WiFi.localIP().toString() : String();
+    json += '"';
+    if (server.arg("ac") == "1" && acCount() > 0) {
+      json += ",\"acs\":";
+      json += acStateJson();
+    }
+    json += '}';
+    sendJson(200, json);
+  });
   server.on("/api/mode", HTTP_POST, []() {
     if (!server.hasArg("v")) { server.send(400, "text/plain", "falta v"); return; }
     setMode(server.arg("v").toInt());
@@ -538,6 +589,19 @@ void webSetup()
     setSetpoint(server.arg("v").toInt());
     sendState();
   });
+  server.on("/api/ac", HTTP_GET, []() { sendJson(200, acStateJson()); });
+  server.on("/api/ac/raw", HTTP_GET, []() { sendJson(200, acRawJson(server.arg("d").toInt())); });
+  // /api/ac/{power,temp,mode,fan,toggle}?d=<aparato>&v=<valor>
+  for (const char *what : {"power", "temp", "mode", "fan", "toggle"}) {
+    server.on(String("/api/ac/") + what, HTTP_POST, [what]() {
+      String error;
+      if (!acCommand(server.arg("d").toInt(), what, server.arg("v"), error)) {
+        sendJson(400, "{\"error\":" + jsonString(error) + "}");
+        return;
+      }
+      sendJson(200, acStateJson());
+    });
+  }
   server.on("/api/wifi/status", HTTP_GET, sendWifiStatus);
   server.on("/api/wifi/scan", HTTP_GET, sendWifiScan);
   server.on("/api/wifi", HTTP_POST, []() {
@@ -581,12 +645,21 @@ void setup()
   fanWrite(0);
 
   Serial.begin(115200);
+  Serial.printf("Arranque. Motivo del ultimo reinicio: %s\n", resetReason());
   dht.begin();
 
+#ifndef DISABLE_BLUETOOTH
   SerialBT.begin(DEVICE_HOSTNAME);   // mismo nombre que en la red
+  // WiFi y Bluetooth comparten la radio: la web y los aires van por WiFi, que tenga preferencia
+  esp_coex_preference_set(ESP_COEX_PREFER_WIFI);
   Serial.printf("Bluetooth activo como \"%s\"\n", DEVICE_HOSTNAME);
+#else
+  Serial.println(F("Bluetooth desactivado (DISABLE_BLUETOOTH)"));
+#endif
 
   wifiSetup();
+  configTime(0, 0, "pool.ntp.org");   // hora para los mensajes a los aires Tuya
+  acSetup();
   webSetup();
 }
 
@@ -615,7 +688,9 @@ void loop()
 {
   server.handleClient();
   wifiLoop();
+#ifndef DISABLE_BLUETOOTH
   btLoop();
+#endif
   fanLoop();
 
   while (Serial.available()) {

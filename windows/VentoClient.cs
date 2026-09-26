@@ -20,6 +20,7 @@ namespace Vento
         private bool _busy;
         private DateTime _nextConnect = DateTime.MinValue;
         private DateTime _nextWifiProbe = DateTime.MinValue;
+        private string _ip;   // última IP conocida: vento.local (mDNS) a veces no resuelve
 
         public VentoState State { get; private set; }
         public LinkStatus Status { get; private set; } = LinkStatus.Connecting;
@@ -64,10 +65,11 @@ namespace Vento
             _timer.Stop();
             if (!IsConnected) return false;
             string host = _config.Host;
+            string address = _ip ?? host + ".local";
             bool wifi = Status == LinkStatus.Wifi;
             var task = Task.Run(async () =>
             {
-                ITransport t = wifi ? new HttpTransport(host)
+                ITransport t = wifi ? new HttpTransport(address)
                     : BluetoothTransport.FindPaired(host) is ulong addr ? new BluetoothOnDemand(addr) : null;
                 if (t == null) return false;
                 using (t) { await t.SetModeAsync(mode); }
@@ -181,9 +183,16 @@ namespace Vento
             }
         }
 
+        // Primero por la última IP conocida y, si no responde, por <host>.local
         private async Task<bool> TryWifiAsync()
         {
-            var http = new HttpTransport(_config.Host);
+            if (_ip != null && await TryWifiAsync(_ip)) return true;
+            return await TryWifiAsync(_config.Host + ".local");
+        }
+
+        private async Task<bool> TryWifiAsync(string address)
+        {
+            var http = new HttpTransport(address);
             try
             {
                 var state = await http.GetStateAsync();
@@ -214,6 +223,7 @@ namespace Vento
 
         private void Update(VentoState state)
         {
+            if (state.Ip != null) _ip = state.Ip;
             State = state;
             Changed?.Invoke();
         }

@@ -22,11 +22,12 @@ namespace Vento
     {
         private readonly HttpClient _http;
 
-        public HttpTransport(string host)
+        // address: "vento.local" o la IP de Vento
+        public HttpTransport(string address)
         {
             _http = new HttpClient
             {
-                BaseAddress = new Uri("http://" + host + ".local"),
+                BaseAddress = new Uri("http://" + address),
                 Timeout = TimeSpan.FromSeconds(4),
             };
         }

@@ -9,54 +9,6 @@
         FontFamily="Segoe UI Variable Text, Segoe UI"
         Loaded="OnLoaded" Deactivated="OnDeactivated" PreviewKeyDown="OnPreviewKeyDown">
 
-    <Window.Resources>
-        <SolidColorBrush x:Key="Muted" Color="#8A97B4"/>
-
-        <Style x:Key="Label" TargetType="TextBlock">
-            <Setter Property="FontSize" Value="11"/>
-            <Setter Property="FontWeight" Value="SemiBold"/>
-            <Setter Property="Foreground" Value="{StaticResource Muted}"/>
-        </Style>
-
-        <!-- Botón de modo; Tag="sel" lo marca como activo -->
-        <Style x:Key="ModeButton" TargetType="Button">
-            <Setter Property="Foreground" Value="#F0F0F0"/>
-            <Setter Property="Cursor" Value="Hand"/>
-            <Setter Property="Template">
-                <Setter.Value>
-                    <ControlTemplate TargetType="Button">
-                        <Border x:Name="Bd" CornerRadius="10" Padding="12,10"
-                                Background="#1AFFFFFF" BorderBrush="#22FFFFFF" BorderThickness="1">
-                            <ContentPresenter/>
-                        </Border>
-                        <ControlTemplate.Triggers>
-                            <Trigger Property="IsMouseOver" Value="True">
-                                <Setter TargetName="Bd" Property="Background" Value="#2AFFFFFF"/>
-                            </Trigger>
-                            <Trigger Property="Tag" Value="sel">
-                                <Setter TargetName="Bd" Property="Background" Value="#0EA5E9"/>
-                                <Setter TargetName="Bd" Property="BorderBrush" Value="#0EA5E9"/>
-                            </Trigger>
-                        </ControlTemplate.Triggers>
-                    </ControlTemplate>
-                </Setter.Value>
-            </Setter>
-        </Style>
-
-        <Style x:Key="LinkButton" TargetType="Button">
-            <Setter Property="Foreground" Value="#38BDF8"/>
-            <Setter Property="Cursor" Value="Hand"/>
-            <Setter Property="FontSize" Value="12"/>
-            <Setter Property="Template">
-                <Setter.Value>
-                    <ControlTemplate TargetType="Button">
-                        <ContentPresenter/>
-                    </ControlTemplate>
-                </Setter.Value>
-            </Setter>
-        </Style>
-    </Window.Resources>
-
     <Border CornerRadius="12" Margin="14" Padding="18,16"
             Background="#F7161D2B" BorderBrush="#26FFFFFF" BorderThickness="1">
         <Border.Effect>
@@ -104,6 +56,9 @@
                 <TextBlock x:Name="ModeText" FontSize="12" Foreground="{StaticResource Muted}" VerticalAlignment="Center"/>
                 <Button Content="Apagar" Style="{StaticResource LinkButton}" HorizontalAlignment="Right" Click="OnOff"/>
             </Grid>
+
+            <!-- Aires acondicionados (AcSection, uno por aparato) -->
+            <StackPanel x:Name="AcPanel"/>
         </StackPanel>
     </Border>
 </Window>

@@ -1,2 +1,4 @@
 secrets.h
 __pycache__
+# Binarios exportados por el Arduino IDE (llevan dentro secrets.h)
+Vent/build/

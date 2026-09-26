@@ -5,7 +5,7 @@
 const char MANIFEST_JSON[] PROGMEM = R"json({
   "name": "Vento",
   "short_name": "Vento",
-  "description": "Control del ventilador",
+  "description": "Control del ventilador y los aires acondicionados",
   "start_url": "/",
   "scope": "/",
   "display": "standalone",
@@ -75,6 +75,21 @@ input[type=text],input[type=password]{width:100%;font:inherit;color:var(--text);
 .msg.err{background:rgba(239,68,68,.15);color:#fca5a5}
 .pw{position:relative}
 .pw .link{position:absolute;right:6px;bottom:6px;font-size:13px}
+.ach{display:flex;align-items:center;justify-content:space-between;margin-bottom:14px}
+.acname{font-size:20px;font-weight:700;letter-spacing:-.3px}
+.pwr{width:52px;height:52px;border-radius:50%;padding:0;display:grid;place-items:center;flex:none}
+.pwr svg{width:24px;height:24px}
+.acmain{display:flex;flex-wrap:wrap;align-items:center;justify-content:space-between;gap:12px;margin-bottom:18px}
+.stepper{display:flex;align-items:center;gap:8px}
+.stepper button{width:48px;height:48px;padding:0;border-radius:50%;font-size:26px;line-height:1}
+.stepper b{font-size:30px;min-width:66px;text-align:center}
+.stepper small{display:block;text-align:center;font-size:12px;color:var(--muted);font-weight:400}
+.chips{display:flex;flex-wrap:wrap;gap:8px;margin-bottom:14px}
+.chips button{flex:1 1 auto;min-width:70px;padding:12px 8px}
+.ac.offline .acbody{opacity:.45}
+.acmsg{color:#fca5a5;font-size:13px;margin-top:4px}
+.acmsg:empty{display:none}
+[hidden]{display:none!important}
 )css";
 
 const char INDEX_HTML[] PROGMEM = R"html(<!DOCTYPE html>
@@ -143,14 +158,44 @@ const char INDEX_HTML[] PROGMEM = R"html(<!DOCTYPE html>
   <div class="hint">Se usa en los modos Auto y Progresivo.</div>
 </section>
 
+<div id="acs"></div>
+
 <footer><a href="/wifi">Configurar WiFi</a></footer>
 
-<div class="toast" id="toast">No se pudo contactar con el ventilador</div>
+<div class="toast" id="toast"></div>
+
+<template id="acTpl">
+<section class="card ac">
+  <div class="ach">
+    <div><div class="label" style="margin:0">Aire acondicionado</div><div class="acname"></div></div>
+    <button class="pwr" aria-label="Encender o apagar">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round">
+        <path d="M12 3v9"/><path d="M6.3 6.8a8 8 0 1 0 11.4 0"/></svg>
+    </button>
+  </div>
+  <div class="acbody">
+    <div class="acmain">
+      <div><div class="big actemp">--°</div><div class="sub acsub"></div></div>
+      <div class="stepper">
+        <button class="minus" aria-label="Bajar">−</button>
+        <div><b class="acsp">--°</b><small>Objetivo</small></div>
+        <button class="plus" aria-label="Subir">+</button>
+      </div>
+    </div>
+    <div class="acctl">
+      <div class="modew"><div class="label">Modo</div><div class="chips modes"></div></div>
+      <div class="fanw"><div class="label">Ventilador</div><div class="chips fans"></div></div>
+      <div class="chips toggles"></div>
+    </div>
+  </div>
+  <div class="acmsg"></div>
+</section>
+</template>
 
 <script>
 const $ = id => document.getElementById(id);
 const btns = [...document.querySelectorAll('button[data-m]')];
-let state = null, dragging = false, timer = null, toastT = null;
+let state = null, dragging = false, toastT = null;
 
 function fmt(v, unit){ return v === null || v === undefined ? '--' : v.toFixed(1) + unit; }
 
@@ -174,26 +219,72 @@ function online(ok){
   $('conn').textContent = ok ? 'Conectado' : 'Sin conexión';
 }
 
-function toast(){
+function toast(text){
+  $('toast').textContent = text || 'No se pudo contactar con el ventilador';
   $('toast').style.display = 'block';
   clearTimeout(toastT);
   toastT = setTimeout(() => $('toast').style.display = 'none', 2500);
 }
 
-async function api(path, opts){
-  const r = await fetch(path, Object.assign({cache: 'no-store'}, opts));
-  if (!r.ok) throw new Error(r.status);
-  return r.json();
+// El ESP32 atiende una conexión cada vez y tiene poca capacidad: todas las peticiones van
+// en fila, de una en una, con límite de tiempo. En cuanto se sabe su IP se usa directamente,
+// porque el nombre vento.local (mDNS) a veces tarda o no resuelve.
+let base = '', queue = Promise.resolve(), pendingCmds = 0;
+const TIMEOUT = 6000;
+
+function api(path, opts){
+  const cmd = !!(opts && opts.method === 'POST');
+  if (cmd) pendingCmds++;
+  const run = async () => {
+    try { return await request(path, opts); }
+    finally { if (cmd) pendingCmds--; }
+  };
+  const p = queue.then(run, run);
+  queue = p.catch(() => {});
+  return p;
 }
 
+async function request(path, opts){
+  const bases = base ? [base, ''] : [''];
+  for (let i = 0; i < bases.length; i++){
+    const ctl = new AbortController();
+    const t = setTimeout(() => ctl.abort(), TIMEOUT);
+    try {
+      let r;
+      try { r = await fetch(bases[i] + path, Object.assign({cache: 'no-store', signal: ctl.signal}, opts)); }
+      catch(e){
+        if (i + 1 < bases.length){ base = ''; continue; }   // la IP no responde: vuelve al nombre
+        throw e;
+      }
+      if (!r.ok) throw new Error(r.status);
+      return await r.json();
+    } finally { clearTimeout(t); }
+  }
+}
+
+// Una sola consulta periódica (ventilador + aires). Si Vento no responde se espera cada vez
+// más (hasta 20 s) para no saturarlo mientras se recupera; las órdenes pasan primero.
+let pollTimer = null, fails = 0;
+function schedule(ms){ clearTimeout(pollTimer); pollTimer = setTimeout(poll, ms); }
+
 async function poll(){
-  try { render(await api('/api/state')); online(true); }
-  catch(e){ online(false); }
+  if (document.hidden) return;
+  if (pendingCmds){ schedule(1000); return; }
+  const seq = acSeq;
+  try {
+    const s = await api('/api/state?ac=1');
+    if (s.ip && location.hostname !== s.ip) base = 'http://' + s.ip;
+    render(s); online(true); fails = 0;
+    // Si se mandó una orden mientras esta consulta esperaba, su respuesta ya está vieja
+    if (s.acs && Array.isArray(s.acs.devices) && seq === acSeq){ acs = s.acs.devices; renderAc(); }
+  }
+  catch(e){ online(false); fails++; }
+  schedule(fails ? Math.min(2000 * 2 ** fails, 20000) : 2000);
 }
 
 async function send(path){
   try { render(await api(path, {method: 'POST'})); online(true); }
-  catch(e){ online(false); toast(); poll(); }
+  catch(e){ online(false); toast(); }
 }
 
 btns.forEach(b => b.addEventListener('click', () => {
@@ -205,9 +296,114 @@ const sp = $('sp');
 sp.addEventListener('input', () => { dragging = true; $('spv').textContent = sp.value + '°'; });
 sp.addEventListener('change', () => { dragging = false; send('/api/setpoint?v=' + sp.value); });
 
-function start(){ poll(); clearInterval(timer); timer = setInterval(poll, 2000); }
+// ---------- Aires acondicionados (/api/ac) ----------
+const ICONS = {cold:'❄️', cool:'❄️', hot:'☀️', heat:'☀️', wet:'💧', dry:'💧', dyr:'💧', wind:'💨', fan:'💨', auto:'🔄'};
+let acs = [], acEls = [];
+let acSeq = 0;   // cambia con cada orden: las consultas que salieron antes se descartan
+const spPending = {};   // temperatura elegida con +/- que aún no se envió
+
+function acCard(i){
+  const c = $('acTpl').content.firstElementChild.cloneNode(true);
+  const q = sel => c.querySelector(sel);
+  const el = {c, name: q('.acname'), pwr: q('.pwr'), temp: q('.actemp'), sub: q('.acsub'), sp: q('.acsp'),
+    ctl: q('.acctl'), modes: q('.modes'), fans: q('.fans'), modew: q('.modew'), fanw: q('.fanw'),
+    toggles: q('.toggles'), msg: q('.acmsg')};
+  el.pwr.onclick = () => { const on = !acs[i].power; acSend(i, 'power', on ? 1 : 0, {power: on}); };
+  q('.minus').onclick = () => acStep(i, -1);
+  q('.plus').onclick = () => acStep(i, 1);
+  return el;
+}
+
+function chips(box, options, current, icons, pick){
+  const sig = JSON.stringify(options);
+  if (box.dataset.sig !== sig){
+    box.dataset.sig = sig;
+    box.innerHTML = '';
+    Object.entries(options).forEach(([value, label]) => {
+      const b = document.createElement('button');
+      b.dataset.v = value;
+      const icon = icons && ICONS[value.toLowerCase()];
+      b.textContent = (icon ? icon + ' ' : '') + label;
+      b.onclick = () => pick(value);
+      box.append(b);
+    });
+  }
+  [...box.children].forEach(b => b.classList.toggle('sel', b.dataset.v === current));
+}
+
+function renderAc(){
+  while (acEls.length < acs.length){ const el = acCard(acEls.length); acEls.push(el); $('acs').append(el.c); }
+  while (acEls.length > acs.length) acEls.pop().c.remove();
+  acs.forEach((a, i) => {
+    const el = acEls[i];
+    const digits = a.step < 1 ? 1 : 0;
+    el.name.textContent = a.name;
+    el.pwr.classList.toggle('sel', a.power);
+    el.temp.textContent = a.temp === null ? '--°' : a.temp.toFixed(1) + '°';
+    const sp = i in spPending ? spPending[i].v : a.setpoint;
+    el.sp.textContent = sp === null ? '--°' : sp.toFixed(digits) + '°';
+    const status = !a.polled ? 'Conectando…' : !a.online ? 'Sin conexión'
+      : a.power ? (a.modes[a.mode] || 'Encendido') : 'Apagado';
+    el.sub.textContent = (a.temp === null ? '' : 'Ambiente · ') + status;
+    el.msg.textContent = a.polled && !a.online ? a.error : '';
+    el.c.classList.toggle('offline', a.polled && !a.online);
+    el.ctl.classList.toggle('dim', !a.power);
+    el.modew.hidden = !Object.keys(a.modes).length;
+    el.fanw.hidden = !Object.keys(a.fans).length;
+    chips(el.modes, a.modes, a.mode, true, v => acSend(i, 'mode', v, {mode: v}));
+    chips(el.fans, a.fans, a.fan, false, v => acSend(i, 'fan', v, {fan: v}));
+    renderToggles(el.toggles, i, a.toggles || []);
+  });
+}
+
+// Interruptores extra (oscilación, modo sueño...): cada uno se enciende y apaga por separado
+function renderToggles(box, i, toggles){
+  const sig = JSON.stringify(toggles.map(t => [t.dp, t.name]));
+  if (box.dataset.sig !== sig){
+    box.dataset.sig = sig;
+    box.innerHTML = '';
+    toggles.forEach(t => {
+      const b = document.createElement('button');
+      b.dataset.dp = t.dp;
+      b.textContent = t.name;
+      b.onclick = () => {
+        const cur = acs[i].toggles.find(x => x.dp === t.dp);
+        const on = !(cur && cur.on);
+        const next = acs[i].toggles.map(x => x.dp === t.dp ? Object.assign({}, x, {on}) : x);
+        acSend(i, 'toggle', t.dp + ':' + (on ? 1 : 0), {toggles: next});
+      };
+      box.append(b);
+    });
+  }
+  box.hidden = !toggles.length;
+  [...box.children].forEach(b => b.classList.toggle('sel', toggles.some(t => t.dp === +b.dataset.dp && t.on)));
+}
+
+function acStep(i, dir){
+  const a = acs[i];
+  let v = i in spPending ? spPending[i].v : (a.setpoint === null ? a.min : a.setpoint);
+  v = Math.min(a.max, Math.max(a.min, Math.round((v + dir * a.step) * 10) / 10));
+  if (i in spPending) clearTimeout(spPending[i].t);
+  // Espera a que se deje de pulsar para mandar una sola orden
+  spPending[i] = {v, t: setTimeout(() => { delete spPending[i]; acSend(i, 'temp', v, {setpoint: v}); }, 700)};
+  renderAc();
+}
+
+async function acSend(i, what, v, patch){
+  acSeq++;
+  acs[i] = Object.assign({}, acs[i], patch);
+  renderAc();
+  try {
+    const r = await api('/api/ac/' + what + '?d=' + i + '&v=' + encodeURIComponent(v), {method: 'POST'});
+    if (Array.isArray(r.devices)) acs = r.devices;
+  }
+  catch(e){ toast('No se pudo enviar la orden al aire'); }
+  renderAc();
+}
+
+function start(){ fails = 0; schedule(0); }
 document.addEventListener('visibilitychange', () => {
-  if (document.hidden) clearInterval(timer); else start();
+  if (document.hidden) clearTimeout(pollTimer); else start();
 });
 start();
 </script>

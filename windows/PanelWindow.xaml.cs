@@ -1,4 +1,5 @@
 using System;
+using System.Collections.Generic;
 using System.Globalization;
 using System.Runtime.InteropServices;
 using System.Windows;
@@ -9,7 +10,8 @@ using System.Windows.Threading;
 
 namespace Vento
 {
-    // Ventana pequeña junto a la bandeja: lecturas, Auto / Progresivo y temperatura objetivo
+    // Ventana pequeña junto a la bandeja: lecturas, Auto / Progresivo, temperatura objetivo
+    // y, debajo, un bloque por cada aire acondicionado
     public partial class PanelWindow : Window
     {
         public event Action Unavailable;
@@ -19,7 +21,7 @@ namespace Vento
         private bool _updating;
         private bool _allowClose;
 
-        public PanelWindow(VentoClient client)
+        public PanelWindow(VentoClient client, IReadOnlyList<AirConditioner> airConditioners)
         {
             InitializeComponent();
             _client = client;
@@ -31,6 +33,19 @@ namespace Vento
             };
             _client.Changed += Refresh;
             Closed += (s, e) => _client.Changed -= Refresh;
+
+            foreach (var ac in airConditioners)
+            {
+                var section = new AcSection(ac);
+                AcPanel.Children.Add(section);
+                Closed += (s, e) => section.Detach();
+            }
+            // Si cambia la altura (p. ej. aparece un error) sigue dentro de la pantalla
+            SizeChanged += (s, e) =>
+            {
+                if (IsLoaded) Top = Math.Max(SystemParameters.WorkArea.Top,
+                                             Math.Min(Top, SystemParameters.WorkArea.Bottom - ActualHeight));
+            };
             Refresh();
             // Por Bluetooth el estado no se actualiza solo: se pide al abrir la ventana
             if (_client.Status == LinkStatus.Bluetooth) _ = _client.RefreshAsync();
