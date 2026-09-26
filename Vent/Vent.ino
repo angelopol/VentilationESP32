@@ -47,6 +47,10 @@ int LEDAZUL = 33;    // midiendo temperatura (modos 6 y 7)
 // 6 todo/nada segun temperatura, 7 proporcional a la temperatura
 int fanMode = 0;
 long tmp = 30;       // temperatura objetivo (16..70, de grado en grado)
+// Modo Auto: se enciende al llegar al objetivo y no se apaga hasta bajar estos grados por
+// debajo, para que no se encienda y apague sin parar alrededor del umbral (0..10)
+long hysteresis = 2;
+bool autoOn = false;  // estado del modo Auto dentro del margen
 int dutyCycle = 0;
 
 float h = NAN, t = NAN, hic = NAN;
@@ -145,7 +149,9 @@ void updateFan()
     fanWrite(speedPwm(fanMode));
   } else if (fanMode == 6) {
     if (!hasReading) { fanWrite(0); return; }
-    fanWrite(hic >= tmp ? 255 : 0);
+    if (hic >= tmp) autoOn = true;
+    else if (hic <= tmp - hysteresis) autoOn = false;
+    fanWrite(autoOn ? 255 : 0);
   } else if (fanMode == 7) {
     if (!hasReading) { fanWrite(0); return; }
     if (hic <= tmp) {
@@ -166,6 +172,7 @@ void setMode(int m)
 {
   if (m < 0 || m > 7 || m == fanMode) return;
   fanMode = m;
+  autoOn = false;   // al entrar en Auto se enciende solo si ya se llego al objetivo
   Serial.printf("Modo: %d\n", fanMode);
   updateFan();
 }
@@ -185,12 +192,26 @@ void setSetpoint(long value)
   updateFan();
 }
 
+void setHysteresis(long value)
+{
+  value = constrain(value, 0, 10);
+  if (value != hysteresis) {
+    prefs.begin("vento", false);
+    prefs.putLong("hyst", value);
+    prefs.end();
+  }
+  hysteresis = value;
+  Serial.printf("Margen del modo Auto: %ld\n", hysteresis);
+  updateFan();
+}
+
 void loadSetpoint()
 {
   prefs.begin("vento", true);
   tmp = constrain(prefs.getLong("setpoint", tmp), 16, 70);
+  hysteresis = constrain(prefs.getLong("hyst", hysteresis), 0, 10);
   prefs.end();
-  Serial.printf("Temperatura objetivo guardada: %ld\n", tmp);
+  Serial.printf("Temperatura objetivo guardada: %ld (margen %ld)\n", tmp, hysteresis);
 }
 
 void readSensor()
@@ -422,6 +443,8 @@ String stateJson()
   json += fanMode;
   json += ",\"setpoint\":";
   json += tmp;
+  json += ",\"hyst\":";
+  json += hysteresis;
   json += ",\"pwm\":";
   json += dutyCycle;
   json += ',';
@@ -583,6 +606,11 @@ void webSetup()
   server.on("/api/setpoint", HTTP_POST, []() {
     if (!server.hasArg("v")) { server.send(400, "text/plain", "falta v"); return; }
     setSetpoint(server.arg("v").toInt());
+    sendState();
+  });
+  server.on("/api/hysteresis", HTTP_POST, []() {
+    if (!server.hasArg("v")) { server.send(400, "text/plain", "falta v"); return; }
+    setHysteresis(server.arg("v").toInt());
     sendState();
   });
   server.on("/api/ac", HTTP_GET, []() { sendJson(200, acStateJson()); });

@@ -45,7 +45,7 @@ The fan keeps working in its current mode while WiFi is down.
 |------|----------|
 | 0 – Off | Fan stopped. |
 | 1–5 | Fixed speeds from 70 % to 100 % (`FAN_MIN_PWM`), with a 100 % kick when starting from a stop. |
-| 6 – Auto | Full speed when the heat index ≥ target temperature, off otherwise. |
+| 6 – Auto | Full speed once the heat index reaches the target temperature; it only turns off again when the heat index drops a **margin** below the target (2 °C by default, 0–10, set in the web app and stored in flash), so it doesn't keep switching on and off around the threshold. |
 | 7 – Progressive | PWM scales with how close the heat index is to the target; full speed above it. |
 
 The target temperature ranges from 16 °C to 70 °C in steps of 1 °C. It is stored in flash, so it survives restarts and power cuts.
@@ -78,9 +78,10 @@ The ESP32 only polls the air conditioners (every 5 s) while someone has the app 
 
 | Method | Path | Description |
 |--------|------|-------------|
-| GET  | `/api/state` | `{mode, setpoint, pwm, temp, hum, hic, rssi, up, heap, minHeap, reset}`; `?ac=1` adds `acs` (same as `/api/ac`), which the web app uses so it only makes one request at a time |
+| GET  | `/api/state` | `{mode, setpoint, hyst, pwm, temp, hum, hic, rssi, up, heap, minHeap, reset, ip}`; `?ac=1` adds `acs` (same as `/api/ac`), which the web app uses so it only makes one request at a time |
 | POST | `/api/mode?v=0..7` | Change mode |
 | POST | `/api/setpoint?v=16..70` | Change target temperature |
+| POST | `/api/hysteresis?v=0..10` | Auto mode margin: degrees below the target before turning off |
 | GET  | `/api/wifi/status` | WiFi / setup-mode status |
 | GET  | `/api/wifi/scan` | Nearby networks (asynchronous, poll until `scanning` is false) |
 | POST | `/api/wifi` (`ssid`, `pass`) | Try a network; saved only if it connects |

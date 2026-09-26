@@ -84,6 +84,10 @@ input[type=text],input[type=password]{width:100%;font:inherit;color:var(--text);
 .stepper button{width:48px;height:48px;padding:0;border-radius:50%;font-size:26px;line-height:1}
 .stepper b{font-size:30px;min-width:66px;text-align:center}
 .stepper small{display:block;text-align:center;font-size:12px;color:var(--muted);font-weight:400}
+.hyst{display:flex;align-items:center;justify-content:space-between;gap:12px;margin-top:14px;
+  padding-top:14px;border-top:1px solid var(--line)}
+.hyst .stepper button{width:40px;height:40px;font-size:22px}
+.hyst .stepper b{font-size:22px;min-width:48px}
 .chips{display:flex;flex-wrap:wrap;gap:8px;margin-bottom:14px}
 .chips button{flex:1 1 auto;min-width:70px;padding:12px 8px}
 .ac.offline .acbody{opacity:.45}
@@ -156,6 +160,15 @@ const char INDEX_HTML[] PROGMEM = R"html(<!DOCTYPE html>
   <div class="sp"><div class="label" style="margin:0">Temperatura objetivo</div><b id="spv">--°</b></div>
   <input type="range" id="sp" min="16" max="70" step="1">
   <div class="hint">Se usa en los modos Auto y Progresivo.</div>
+  <div class="hyst">
+    <div><div class="label" style="margin:0 0 4px">Margen para apagar</div>
+      <div class="hint" id="hystHint">Auto se apaga al bajar del objetivo.</div></div>
+    <div class="stepper">
+      <button id="hystMinus" aria-label="Menos margen">−</button>
+      <b id="hystv">--°</b>
+      <button id="hystPlus" aria-label="Más margen">+</button>
+    </div>
+  </div>
 </section>
 
 <div id="acs"></div>
@@ -206,6 +219,7 @@ function render(s){
   $('hum').textContent = fmt(s.hum, ' %');
   btns.forEach(b => b.classList.toggle('sel', +b.dataset.m === s.mode));
   if (!dragging){ $('sp').value = s.setpoint; $('spv').textContent = s.setpoint + '°'; }
+  if (hystPending === null && typeof s.hyst === 'number') showHyst(s.hyst, s.setpoint);
   $('spCard').classList.toggle('dim', s.mode < 6);
   const pct = Math.round(s.pwm / 255 * 100);
   $('pwm').style.width = pct + '%';
@@ -295,6 +309,30 @@ btns.forEach(b => b.addEventListener('click', () => {
 const sp = $('sp');
 sp.addEventListener('input', () => { dragging = true; $('spv').textContent = sp.value + '°'; });
 sp.addEventListener('change', () => { dragging = false; send('/api/setpoint?v=' + sp.value); });
+
+// Margen del modo Auto: se enciende al llegar al objetivo y se apaga al bajar este margen
+let hystPending = null, hystT = null;
+function showHyst(h, target){
+  $('hystv').textContent = h + '°';
+  $('hystHint').textContent = h
+    ? 'Auto se enciende a ' + target + '° y se apaga al bajar a ' + (target - h) + '°.'
+    : 'Auto se enciende y se apaga justo en ' + target + '°.';
+}
+function stepHyst(dir){
+  if (!state) return;
+  const cur = hystPending !== null ? hystPending : state.hyst;
+  hystPending = Math.min(10, Math.max(0, cur + dir));
+  showHyst(hystPending, state.setpoint);
+  clearTimeout(hystT);
+  // Espera a que se deje de pulsar para mandar una sola orden
+  hystT = setTimeout(async () => {
+    const v = hystPending;
+    await send('/api/hysteresis?v=' + v);
+    hystPending = null;
+  }, 700);
+}
+$('hystMinus').onclick = () => stepHyst(-1);
+$('hystPlus').onclick = () => stepHyst(1);
 
 // ---------- Aires acondicionados (/api/ac) ----------
 const ICONS = {cold:'❄️', cool:'❄️', hot:'☀️', heat:'☀️', wet:'💧', dry:'💧', dyr:'💧', wind:'💨', fan:'💨', auto:'🔄'};
