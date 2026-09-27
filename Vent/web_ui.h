@@ -470,6 +470,7 @@ const char WIFI_HTML[] PROGMEM = R"html(<!DOCTYPE html>
   <div class="label">Estado</div>
   <div id="status">Consultando…</div>
   <div class="hint" id="saved"></div>
+  <div class="hint" id="mac"></div>
   <button class="link" id="forget" style="display:none;padding-left:0">Olvidar red guardada</button>
 </section>
 
@@ -518,11 +519,12 @@ function showStatus(s){
   let t;
   if (s.connected) t = 'Conectado a «' + s.ssid + '» · ' + s.ip;
   else if (s.attempting) t = 'Conectando a «' + s.target + '»…';
-  else t = 'Sin conexión al router';
+  else t = 'Sin conexión al router' + (s.reason ? ' (último fallo: ' + s.reason + ')' : '');
   if (s.ap) t += '\nRed propia «' + s.apSsid + '» activa (' + s.apIp + ')';
   $('status').style.whiteSpace = 'pre-line';
   $('status').textContent = t;
   $('saved').textContent = s.saved ? 'Red guardada: «' + s.saved + '»' : '';
+  $('mac').textContent = s.mac ? 'MAC de Vento: ' + s.mac : '';
   $('forget').style.display = s.saved ? 'inline-block' : 'none';
   return s;
 }
@@ -547,7 +549,8 @@ async function scan(){
         b.type = 'button'; b.className = 'net';
         const name = document.createElement('span'); name.textContent = n.ssid;
         const info = document.createElement('em');
-        info.textContent = (n.open ? 'abierta · ' : '') + (n.rssi > -60 ? 'buena' : n.rssi > -75 ? 'media' : 'débil');
+        info.textContent = (n.open ? 'abierta · ' : '') + (n.rssi > -60 ? 'buena' : n.rssi > -75 ? 'media' : 'débil') +
+          (n.channel ? ' · canal ' + n.channel : '');
         b.append(name, info);
         b.onclick = () => { $('ssid').value = n.ssid; $('pass').value = ''; $('pass').focus(); };
         $('nets').append(b);
@@ -577,7 +580,8 @@ async function follow(){
     $('go').disabled = false;
   } else if (s.failed === target){
     stopWatch();
-    msg('No se pudo conectar a «' + target + '». Revisa la contraseña e inténtalo de nuevo.', 'err');
+    msg('No se pudo conectar a «' + target + '»' + (s.reason ? ': ' + s.reason : '') +
+        '. Si no aparece en la lista de arriba, el ESP32 no la ve (solo funciona con 2,4 GHz).', 'err');
     $('go').disabled = false;
   }
 }

@@ -5,6 +5,7 @@
 #include <Preferences.h>
 #include <esp_arduino_version.h>
 #include <esp_system.h>
+#include <esp_wifi.h>
 #include "DHT.h"
 
 #include "secrets.h"   // WIFI_SSID, WIFI_PASSWORD, DEVICE_HOSTNAME, AC_DEVICES_JSON (ver secrets.example.h)
@@ -90,6 +91,9 @@ bool wifiWasConnected = false;
 bool mdnsStarted = false;
 unsigned long attemptStart = 0, lastApRetry = 0, disconnectedSince = 0, connectedSince = 0;
 String currentSsid, lastFailedSsid, savedSsid;
+volatile int lastDisconnectReason = 0;   // motivo del ultimo fallo del WiFi (wifi_err_reason_t)
+unsigned long lastPortalUse = 0;         // ultima peticion al portal de configuracion
+const unsigned long PORTAL_BUSY = 180000; // mientras se usa el portal no se reintenta el router
 
 DNSServer dns;
 Preferences prefs;
@@ -237,7 +241,7 @@ void updateLeds()
 
   if (WiFi.status() == WL_CONNECTED) {
     digitalWrite(LEDROJO, HIGH);
-  } else if (millis() - lastBlink >= (apActive ? BLINK_FAST : BLINK_SLOW)) {
+  } else if (millis() - lastBlink >= (apActive && !attempting ? BLINK_FAST : BLINK_SLOW)) {
     lastBlink = millis();
     blinkOn = !blinkOn;
     digitalWrite(LEDROJO, blinkOn ? HIGH : LOW);
@@ -325,7 +329,15 @@ void forgetSavedCred()
 void wifiSetup()
 {
   WiFi.setHostname(DEVICE_HOSTNAME);
+  WiFi.onEvent([](arduino_event_id_t event, arduino_event_info_t info) {
+    lastDisconnectReason = info.wifi_sta_disconnected.reason;
+    Serial.printf("WiFi: %s (%d)\n", disconnectText(lastDisconnectReason), lastDisconnectReason);
+  }, ARDUINO_EVENT_WIFI_STA_DISCONNECTED);
   WiFi.mode(WIFI_STA);
+  // Canales 1-13: por defecto el ESP32 solo busca activamente en 1-11 y no encuentra un
+  // router que haya elegido el 12 o el 13
+  wifi_country_t country = {"01", 1, 13, 20, WIFI_COUNTRY_POLICY_MANUAL};
+  esp_wifi_set_country(&country);
   WiFi.setAutoReconnect(true);
   WiFi.setSleep(false);   // WiFi siempre despierto: responde antes y mDNS (vento.local) no falla
   loadCreds();
@@ -399,8 +411,10 @@ void wifiLoop()
     // Se perdio el router: el ESP32 reintenta solo; si tarda demasiado abre la red propia
     if (now - disconnectedSince >= AP_AFTER_DISCONNECT) startAp();
   } else if (credCount > 0 && now - lastApRetry >= AP_RETRY_INTERVAL
-             && WiFi.softAPgetStationNum() == 0) {
-    // Solo reintenta si nadie esta usando la red propia (el intento cambia de canal)
+             && (WiFi.softAPgetStationNum() == 0 || now - lastPortalUse >= PORTAL_BUSY)) {
+    // El intento puede cambiar de canal y desconectar un momento a quien este en la red propia:
+    // no se reintenta mientras alguien usa el portal, pero si solo hay un movil que se unio
+    // solo (p. ej. porque recuerda la red "Vento"), si
     lastApRetry = now;
     startNextAttempt();
   }
@@ -496,8 +510,40 @@ void sendIcon(const uint8_t *data, size_t len)
   server.send_P(200, "image/png", (const char *)data, len);
 }
 
+// Motivo de un fallo del WiFi (wifi_err_reason_t) en palabras
+const char *disconnectText(int reason)
+{
+  switch (reason) {
+    case WIFI_REASON_NO_AP_FOUND:
+      return "no encuentra la red (nombre distinto, solo 5 GHz o fuera de alcance)";
+    case WIFI_REASON_4WAY_HANDSHAKE_TIMEOUT:
+    case WIFI_REASON_HANDSHAKE_TIMEOUT:
+    case WIFI_REASON_MIC_FAILURE:
+      return "la contrasena no coincide (el router no completo el cifrado)";
+    case WIFI_REASON_AUTH_FAIL:
+    case WIFI_REASON_AUTH_EXPIRE:
+      return "el router rechazo la autenticacion (contrasena o filtro de dispositivos)";
+    case WIFI_REASON_NO_AP_FOUND_W_COMPATIBLE_SECURITY:
+    case WIFI_REASON_NO_AP_FOUND_IN_AUTHMODE_THRESHOLD:
+      return "la seguridad de la red no es compatible (usa WPA2 o WPA2/WPA3)";
+    case WIFI_REASON_NO_AP_FOUND_IN_RSSI_THRESHOLD:
+    case WIFI_REASON_BEACON_TIMEOUT:
+      return "senal demasiado debil";
+    case WIFI_REASON_ASSOC_FAIL:
+    case WIFI_REASON_CONNECTION_FAIL:
+    case WIFI_REASON_ASSOC_TOOMANY:
+      return "el router no acepto la conexion (¿limite de dispositivos o filtro MAC?)";
+    case WIFI_REASON_ASSOC_LEAVE:
+    case WIFI_REASON_AUTH_LEAVE:
+      return "desconectado";
+    default:
+      return "error del WiFi";
+  }
+}
+
 void sendWifiStatus()
 {
+  lastPortalUse = millis();
   bool connected = WiFi.status() == WL_CONNECTED;
   String json = "{\"connected\":";
   json += connected ? "true" : "false";
@@ -511,6 +557,12 @@ void sendWifiStatus()
   json += jsonString(currentSsid);
   json += ",\"failed\":";
   json += jsonString(lastFailedSsid);
+  json += ",\"reason\":";
+  json += jsonString(connected || !lastDisconnectReason ? String()
+                    : String(disconnectText(lastDisconnectReason)) + " (codigo " + lastDisconnectReason + ")");
+  // MAC con la que Vento se presenta al router (para filtros de dispositivos o reservar la IP)
+  json += ",\"mac\":";
+  json += jsonString(WiFi.macAddress());
   json += ",\"saved\":";
   json += jsonString(savedSsid);
   json += ",\"ap\":";
@@ -526,6 +578,7 @@ void sendWifiStatus()
 
 void sendWifiScan()
 {
+  lastPortalUse = millis();
   int n = WiFi.scanComplete();
   if (n == WIFI_SCAN_FAILED) {
     WiFi.scanNetworks(true);   // asincrono, el portal vuelve a preguntar
@@ -544,6 +597,8 @@ void sendWifiScan()
     json += WiFi.RSSI(k);
     json += ",\"open\":";
     json += WiFi.encryptionType(k) == WIFI_AUTH_OPEN ? "true" : "false";
+    json += ",\"channel\":";
+    json += WiFi.channel(k);
     json += '}';
   }
   json += "]}";
