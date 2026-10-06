@@ -119,16 +119,28 @@ namespace Vento
 
             // Sistema de ventilación: el ventilador y los aires se encienden con Windows y se apagan con el PC
             var systemItem = new WinForms.ToolStripMenuItem("Sistema de ventilación");
-            _startupModeItem = new WinForms.ToolStripMenuItem("Encender al iniciar Windows")
+            _startupModeItem = new WinForms.ToolStripMenuItem("Al iniciar Windows")
             {
-                Checked = _config.StartupMode >= 0, CheckOnClick = true,
-                ToolTipText = _acs.Count > 0 ? "Ventilador en modo Auto y aires encendidos" : "Ventilador en modo Auto",
+                ToolTipText = _acs.Count > 0 ? "Modo del ventilador al iniciar; los aires se encienden" : "Modo del ventilador al iniciar",
             };
-            _startupModeItem.CheckedChanged += (s, a) =>
+            var startupChoices = new[] { -1, 6, 1, 2, 3, 4, 5, 7 };
+            foreach (int choice in startupChoices)
             {
-                _config.StartupMode = _startupModeItem.Checked ? 6 : -1;
-                _config.Save();
-            };
+                int c = choice;
+                var item = new WinForms.ToolStripMenuItem(c < 0 ? "No hacer nada" : VentoState.ModeName(c))
+                {
+                    Tag = c, Checked = _config.StartupMode == c,
+                };
+                item.Click += (s, a) =>
+                {
+                    _config.StartupMode = c;
+                    _config.Save();
+                    foreach (var other in _startupModeItem.DropDownItems.OfType<WinForms.ToolStripMenuItem>())
+                        other.Checked = (int)other.Tag == c;
+                };
+                _startupModeItem.DropDownItems.Add(item);
+                if (c < 0) _startupModeItem.DropDownItems.Add(new WinForms.ToolStripSeparator());
+            }
             systemItem.DropDownItems.Add(_startupModeItem);
 
             _shutdownModeItem = new WinForms.ToolStripMenuItem("Apagar al apagar el PC")
