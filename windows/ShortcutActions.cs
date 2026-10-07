@@ -22,10 +22,10 @@ namespace Vento
             }));
             Fan("fan.on", "Encender (nivel 1)", () => client.SetModeAsync(1));
             Fan("fan.off", "Apagar", () => client.SetModeAsync(0));
-            Fan("fan.toggle", "Alternar encendido / apagado", async () =>
+            Fan("fan.toggle", "Alternar encendido (nivel 5) / apagado", async () =>
             {
                 if (!await client.RefreshStateAsync() || client.State == null) return false;
-                return await client.SetModeAsync(client.State.Mode == 0 ? 1 : 0);
+                return await client.SetModeAsync(client.State.Mode == 0 ? 5 : 0);
             });
             async Task<bool> Step(int direction)
             {
