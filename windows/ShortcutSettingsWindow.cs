@@ -49,7 +49,7 @@ namespace Vento
             content.Children.Add(new TextBlock { Text = "Atajos de teclado", FontSize = 25, FontWeight = FontWeights.SemiBold });
             content.Children.Add(new TextBlock
             {
-                Text = "Pulsa Asignar, mantén todas las teclas de la combinación y suéltalas para terminar. Usa Ctrl, Alt, Shift o Win junto con una o varias teclas (ej.: Ctrl + Alt + Shift + F8 + A). Esc cancela la grabación.\n\nFuncionan con Vento en la bandeja. Se ejecutan una vez por pulsación; suelta toda la combinación antes de repetir. El teclado puede limitar cuántas teclas reconoce a la vez. Evita atajos reservados por Windows u otras apps: las teclas también llegan a ellas. Los atajos están pausados mientras esta ventana está abierta.",
+                Text = "Pulsa Asignar y luego pulsa las teclas de la combinación una a una (no hace falta mantenerlas): cada tecla se suma. Enter guarda la combinación y Esc cancela. Usa Ctrl, Alt, Shift o Win junto con una o varias teclas (ej.: Ctrl + Alt + Shift + F8 + A).\n\nFuncionan con Vento en la bandeja. Se ejecutan una vez por pulsación; suelta toda la combinación antes de repetir. El teclado puede limitar cuántas teclas reconoce a la vez. Evita atajos reservados por Windows u otras apps: las teclas también llegan a ellas. Los atajos están pausados mientras esta ventana está abierta.",
                 TextWrapping = TextWrapping.Wrap, Margin = new Thickness(0, 12, 8, 18),
             });
             foreach (var ac in acs.Where(ac => ac.Config.Dps.Mode > 0))
@@ -124,7 +124,7 @@ namespace Vento
             StopRecording();
             _recording = binding;
             _buttons[binding.Action].Content = "Pulsa la combinación…";
-            _status.Text = "Mantén las teclas juntas y suéltalas. Esc cancela.";
+            _status.Text = "Pulsa las teclas una a una; se van sumando a la combinación. Enter guarda, Esc cancela.";
             _shortcuts.BeginCapture();
         }
         private void CaptureChanged(string text)

@@ -127,18 +127,21 @@ namespace Vento
                     CancelCapture();
                     _dispatcher.BeginInvoke(new Action(() => Captured?.Invoke(null)));
                 }
-                else
+                else if (down && key == 13)
                 {
-                    _matcher.Update(key, normalizedDown);
-                    if (down && _matcher.Down.Count > _recorded.Count) _recorded = new(_matcher.Down);
-                    string label = ShortcutMatcher.Format(_recorded);
-                    _dispatcher.BeginInvoke(new Action(() => CaptureChanged?.Invoke(label)));
-                    if (_physical.Count == 0)
+                    // Enter confirms the keys accumulated so far; releasing keys never ends the capture.
+                    if (_recorded.Count > 0)
                     {
                         var result = _recorded.OrderBy(k => k).ToList();
                         CancelCapture();
                         _dispatcher.BeginInvoke(new Action(() => Captured?.Invoke(result)));
                     }
+                }
+                else if (down)
+                {
+                    _recorded.Add(key);
+                    string label = ShortcutMatcher.Format(_recorded) + " (Enter para guardar)";
+                    _dispatcher.BeginInvoke(new Action(() => CaptureChanged?.Invoke(label)));
                 }
                 return new IntPtr(1);
             }
