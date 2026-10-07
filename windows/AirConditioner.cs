@@ -1,6 +1,7 @@
 using System;
 using System.Collections.Generic;
 using System.Globalization;
+using System.Linq;
 using System.Text.Json;
 using System.Text.Json.Serialization;
 using System.Threading;
@@ -26,6 +27,18 @@ namespace Vento
         [JsonPropertyName("min")] public double Min { get; set; } = 16;
         [JsonPropertyName("max")] public double Max { get; set; } = 31;
         [JsonPropertyName("step")] public double Step { get; set; } = 1;
+        [JsonPropertyName("coolMode")] public string CoolMode { get; set; }
+        [JsonPropertyName("fanMode")] public string FanMode { get; set; }
+
+        public string ResolveMode(bool cool)
+        {
+            string configured = cool ? CoolMode : FanMode;
+            if (configured != null) return Modes.ContainsKey(configured) ? configured : null;
+            string[] names = cool ? new[] { "cold", "cool", "cooling", "frío", "frio" }
+                                  : new[] { "wind", "fan", "fan_only", "ventilador" };
+            return Modes.FirstOrDefault(kv => names.Contains(kv.Key, StringComparer.OrdinalIgnoreCase) ||
+                                             names.Contains(kv.Value, StringComparer.OrdinalIgnoreCase)).Key;
+        }
         // valor que usa el aparato -> nombre en la app (valores típicos de la categoría "kt" de Tuya)
         [JsonPropertyName("modes")] public OrderedDictionary<string, string> Modes { get; set; } = new()
         {
@@ -157,9 +170,10 @@ namespace Vento
             if (_watchers > 0 && --_watchers == 0) _timer.Stop();
         }
 
-        public async Task RefreshAsync()
+        public async Task RefreshAsync(bool wait = false)
         {
-            if (!await _lock.WaitAsync(0)) return;   // ya hay una operación en curso
+            if (wait) await _lock.WaitAsync();
+            else if (!await _lock.WaitAsync(0)) return;   // ya hay una operación en curso
             try { await QueryAsync(); }
             finally { _lock.Release(); }
         }
@@ -169,9 +183,19 @@ namespace Vento
 
         public Task<bool> SetSetpointAsync(double t)
         {
+            string cool = Config.ResolveMode(true);
+            if (Config.Dps.Setpoint <= 0 || Config.Dps.Mode <= 0 || cool == null)
+            {
+                Error = "Configura el modo frío en Configuración de atajos antes de cambiar la temperatura.";
+                Changed?.Invoke();
+                return Task.FromResult(false);
+            }
             t = Math.Clamp(t, Config.Min, Config.Max);
-            t = Config.Min + Math.Round((t - Config.Min) / Config.Step) * Config.Step;
-            return SendAsync(Config.Dps.Setpoint, (int)Math.Round(t * Config.Scale), () => Setpoint = t);
+            t = Math.Clamp(Config.Min + Math.Round((t - Config.Min) / Config.Step) * Config.Step, Config.Min, Config.Max);
+            return SendAsync(new Dictionary<int, object>
+            {
+                [Config.Dps.Setpoint] = (int)Math.Round(t * Config.Scale), [Config.Dps.Mode] = cool,
+            }, () => { Setpoint = t; Mode = cool; });
         }
 
         public Task<bool> SetModeAsync(string mode) =>
@@ -196,18 +220,20 @@ namespace Vento
             });
         }
 
-        private async Task<bool> SendAsync(int dp, object value, Action apply)
+        private Task<bool> SendAsync(int dp, object value, Action apply) =>
+            dp <= 0 ? Task.FromResult(false) : SendAsync(new Dictionary<int, object> { [dp] = value }, apply);
+
+        private async Task<bool> SendAsync(Dictionary<int, object> values, Action apply)
         {
-            if (dp <= 0) return false;
             apply();
-            _expect[dp] = (JsonSerializer.Serialize(value), DateTime.Now + Hold);
+            foreach (var kv in values) _expect[kv.Key] = (JsonSerializer.Serialize(kv.Value), DateTime.Now + Hold);
             Changed?.Invoke();
 
             await _lock.WaitAsync();
             bool ok = true;
             try
             {
-                var dps = new Dictionary<string, object> { [dp.ToString()] = value };
+                var dps = values.ToDictionary(kv => kv.Key.ToString(), kv => kv.Value);
                 try { await _tuya.SetAsync(dps); }
                 catch (TuyaException)
                 {

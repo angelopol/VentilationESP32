@@ -123,6 +123,20 @@ It starts with Windows automatically after the first run (registry `Run` key, no
 
 **Local build:** `dotnet publish windows/Vento.csproj -c Release -r win-x64 --self-contained true -p:PublishSingleFile=true -o publish`
 
+### Atajos de teclado (Windows)
+
+Haz clic derecho en el icono de Vento → **Configuración de atajos…**. Cada acción puede tener una combinación propia: encender/apagar el ventilador, subir/bajar velocidad, niveles fijos, Auto/Progresivo y, para cada aire configurado, encendido/apagado, temperatura, modos, velocidades y controles extra.
+
+Pulsa **Asignar**, mantén todas las teclas juntas y suéltalas. Se admiten varias teclas normales junto con Ctrl, Alt, Shift y/o Win, por ejemplo `Ctrl + Alt + Shift + F8 + A + B`, sin un límite de longitud impuesto por Vento (el teclado físico puede limitar las pulsaciones simultáneas). **Esc** cancela la grabación; **Quitar** elimina el atajo. **Guardar** aplica los cambios y los conserva en `%APPDATA%\Vento\config.json`; **Cancelar** los descarta. No se permiten combinaciones duplicadas ni que una sea parte de otra.
+
+Los atajos funcionan globalmente mientras Vento esté abierto en la bandeja y se pausan al abrir la configuración. Cada combinación se ejecuta una sola vez hasta soltar todas sus teclas. No se bloquean las teclas en otras aplicaciones: evita combinaciones reservadas por Windows u otros programas. Algunas combinaciones del sistema, como Ctrl+Alt+Supr, no están disponibles para Vento.
+
+**Subir o bajar la temperatura activa siempre el modo frío**, tanto desde el atajo como desde el panel o menú de Windows. La temperatura y el modo se envían juntos, respetando el paso y los límites del equipo. En la configuración puedes seleccionar qué valor del aire corresponde a **Frío** y a **Ventilador**; se reconocen automáticamente los nombres habituales. Si no se reconoce el modo frío, configúralo antes de cambiar la temperatura. El cambio de modo o temperatura no modifica el encendido del aire.
+
+Encender el ventilador selecciona el nivel 1. Subir/bajar recorre los niveles 0–5 (0 apaga); desde Auto/Progresivo parte de la velocidad manual más cercana a la potencia actual. Los atajos de cada aire se guardan por su ID, por lo que reordenar la lista no cambia el equipo controlado. Este módulo pertenece a la app de Windows; no requiere reflashear el ESP32.
+
+**Pruebas de atajos:** `dotnet run --project windows.tests/Vento.Tests.csproj -c Release`
+
 ## Files
 
 The Arduino sketch lives in `Vent/` (the IDE requires the folder to share the `.ino` name):

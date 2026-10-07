@@ -26,6 +26,9 @@ namespace Vento
         private WinForms.NotifyIcon _tray;
         private Drawing.Icon _iconOn, _iconOff;
         private PanelWindow _panel;
+        private GlobalShortcuts _shortcuts;
+        private ShortcutSettingsWindow _settings;
+        private List<ShortcutAction> _shortcutActions;
         private DateTime _panelClosedAt = DateTime.MinValue;
         private DateTime _startedAt;
         private bool _startupModeDone;
@@ -51,6 +54,16 @@ namespace Vento
                                           .Select(c => new AirConditioner(c)).ToList();
 
             SetupTray();
+            _shortcutActions = ShortcutActions.Create(_client, _acs);
+            try
+            {
+                _shortcuts = new GlobalShortcuts(Dispatcher);
+                string error = ShortcutMatcher.Validate(_config.Shortcuts);
+                if (error == null) _shortcuts.SetBindings(_config.Shortcuts);
+                else Notify("Atajos desactivados: " + error);
+                _shortcuts.Triggered += ExecuteShortcut;
+            }
+            catch (Exception ex) { Notify("No se pudieron activar los atajos: " + ex.Message); }
             _client.Start();
             if (_config.StartupMode >= 0)
                 foreach (var ac in _acs) _ = TurnOnAtStartupAsync(ac);
@@ -107,6 +120,10 @@ namespace Vento
             _webItem = new WinForms.ToolStripMenuItem("Abrir panel web");
             _webItem.Click += (s, a) => OpenUrl(_client.WebUrl);
             menu.Items.Add(_webItem);
+
+            var settingsItem = new WinForms.ToolStripMenuItem("Configuración de atajos…");
+            settingsItem.Click += (s, a) => ShowShortcutSettings();
+            menu.Items.Add(settingsItem);
 
 
             _startItem = new WinForms.ToolStripMenuItem("Iniciar con Windows") { CheckOnClick = true };
@@ -337,6 +354,32 @@ namespace Vento
             Notify($"No se pudo conectar con Vento. Comprueba que está encendido y en la misma red WiFi ({_client.WebUrl}).");
         }
 
+        private void ShowShortcutSettings()
+        {
+            if (_settings != null) { _settings.Activate(); return; }
+            if (_shortcuts == null) { Notify("El teclado global no está disponible. Reinicia Vento para intentarlo de nuevo."); return; }
+            _settings = new ShortcutSettingsWindow(_config, _shortcuts, _shortcutActions, _acs);
+            _settings.Closed += (s, e) => _settings = null;
+            _settings.Show();
+        }
+
+        private async void ExecuteShortcut(string id)
+        {
+            var action = _shortcutActions.FirstOrDefault(a => a.Id == id);
+            if (action == null) return;
+            try
+            {
+                if (!await action.Run()) Notify("No se pudo ejecutar «" + action.Label + "». Revisa la conexión y los modos configurados del equipo.");
+            }
+            catch (Exception ex) { Notify("Error en «" + action.Label + "»: " + ex.Message); }
+        }
+
+        protected override void OnExit(ExitEventArgs e)
+        {
+            _shortcuts?.Dispose();
+            base.OnExit(e);
+        }
+
         // -------------------------------------------------------------- helpers
         private void LoadIcons()
         {
@@ -382,6 +425,8 @@ namespace Vento
 
         private void ExitApp()
         {
+            _settings?.Close();
+            _shortcuts?.Dispose();
             _panel?.Close();
             _client?.Dispose();
             if (_tray != null) { _tray.Visible = false; _tray.Dispose(); }

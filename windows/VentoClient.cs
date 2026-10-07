@@ -49,6 +49,7 @@ namespace Vento
         }
 
         public Task<bool> SetModeAsync(int mode) => RunAsync(t => t.SetModeAsync(mode));
+        public Task<bool> RefreshStateAsync() => RunAsync(t => t.GetStateAsync());
 
         public Task<bool> SetSetpointAsync(int degrees) => RunAsync(t => t.SetSetpointAsync(degrees));
 

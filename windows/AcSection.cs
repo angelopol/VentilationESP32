@@ -143,7 +143,7 @@ namespace Vento
             foreach (var kv in _fanButtons) kv.Value.Tag = kv.Key == _ac.Fan ? "sel" : null;
             foreach (var kv in _toggleButtons) kv.Value.Tag = _ac.IsToggleOn(kv.Key) ? "sel" : null;
             _controls.Opacity = _ac.Online && _ac.Power ? 1 : 0.45;
-            _error.Text = _ac.Polled && !_ac.Online ? _ac.Error : "";
+            _error.Text = _ac.Error ?? "";
             _error.Visibility = string.IsNullOrEmpty(_error.Text) ? Visibility.Collapsed : Visibility.Visible;
         }
 

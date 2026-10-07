@@ -21,6 +21,7 @@ namespace Vento
         public int ShutdownMode { get; set; } = 0;
         // Aires acondicionados Tuya controlados por la red local (ver README)
         public List<AcConfig> AirConditioners { get; set; } = new List<AcConfig>();
+        public List<ShortcutBinding> Shortcuts { get; set; } = new();
 
         // config.json existe pero no se pudo leer: no se guarda nada encima
         [JsonIgnore] public bool LoadFailed { get; private set; }
@@ -44,6 +45,7 @@ namespace Vento
                     if (cfg != null && !string.IsNullOrWhiteSpace(cfg.Host))
                     {
                         cfg.AirConditioners ??= new List<AcConfig>();
+                        cfg.Shortcuts ??= new();
                         return cfg;
                     }
                 }
@@ -59,18 +61,26 @@ namespace Vento
 
         public void Save()
         {
-            if (LoadFailed) return;
+            TrySave(out _);
+        }
+
+        public bool TrySave(out string error)
+        {
+            error = null;
+            if (LoadFailed) { error = "Corrige config.json y reinicia Vento antes de guardar."; return false; }
             try
             {
                 Directory.CreateDirectory(Dir);
-                File.WriteAllText(FilePath,
+                File.WriteAllText(FilePath + ".tmp",
                     JsonSerializer.Serialize(this, new JsonSerializerOptions
                     {
                         WriteIndented = true,
                         Encoder = JavaScriptEncoder.UnsafeRelaxedJsonEscaping,   // "Frío" legible
                     }));
+                File.Move(FilePath + ".tmp", FilePath, true);
+                return true;
             }
-            catch { }
+            catch (Exception e) { error = e.Message; return false; }
         }
     }
 }
