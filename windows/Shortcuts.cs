@@ -101,8 +101,9 @@ namespace Vento
         {
             if (code < 0) return CallNextHookEx(_hook, code, message, data);
             var input = Marshal.PtrToStructure<KeyboardInput>(data);
-            // Ignore synthetic keystrokes (including our own or another application's).
-            if ((input.Flags & 0x10) != 0) return CallNextHookEx(_hook, code, message, data);
+            // Synthetic keystrokes (LLKHF_INJECTED) count too: controller mappers, macro and
+            // accessibility tools send shortcuts with SendInput. Vento never injects keys itself,
+            // so there is no feedback loop to guard against.
             int msg = message.ToInt32();
             bool down = msg is 0x100 or 0x104;
             if (!down && msg is not (0x101 or 0x105)) return CallNextHookEx(_hook, code, message, data);
