@@ -29,6 +29,17 @@ namespace Vento
         [JsonPropertyName("step")] public double Step { get; set; } = 1;
         [JsonPropertyName("coolMode")] public string CoolMode { get; set; }
         [JsonPropertyName("fanMode")] public string FanMode { get; set; }
+        [JsonPropertyName("lowFan")] public string LowFan { get; set; }
+        [JsonPropertyName("highFan")] public string HighFan { get; set; }
+
+        public string ResolveFan(bool high)
+        {
+            string configured = high ? HighFan : LowFan;
+            if (configured != null) return Fans.ContainsKey(configured) ? configured : null;
+            string[] names = high ? new[] { "high", "alta", "alto" } : new[] { "low", "baja", "bajo" };
+            return Fans.FirstOrDefault(kv => names.Contains(kv.Key, StringComparer.OrdinalIgnoreCase) ||
+                                            names.Contains(kv.Value, StringComparer.OrdinalIgnoreCase)).Key;
+        }
 
         public string ResolveMode(bool cool)
         {
@@ -203,6 +214,37 @@ namespace Vento
 
         public Task<bool> SetFanAsync(string fan) =>
             SendAsync(Config.Dps.Fan, fan, () => Fan = fan);
+
+        internal static Dictionary<int, object> FanCycleCommand(AcConfig config, bool power, string mode, string fan)
+        {
+            string fanMode = config.ResolveMode(false), low = config.ResolveFan(false), high = config.ResolveFan(true);
+            if (config.Dps.Power <= 0 || config.Dps.Mode <= 0 || config.Dps.Fan <= 0 ||
+                fanMode == null || low == null || high == null || low == high) return null;
+            // Desde apagado u otro modo se entra en ventilación baja. En ventilación,
+            // cualquier velocidad distinta de alta pasa a alta; alta vuelve a baja.
+            string next = !power || mode != fanMode || fan == high ? low : high;
+            return new Dictionary<int, object>
+            {
+                [config.Dps.Power] = true, [config.Dps.Mode] = fanMode, [config.Dps.Fan] = next,
+            };
+        }
+
+        public Task<bool> CycleFanAsync()
+        {
+            var values = FanCycleCommand(Config, Power, Mode, Fan);
+            if (values == null)
+            {
+                Error = "Configura el modo ventilador y sus velocidades baja y alta en Configuración de atajos.";
+                Changed?.Invoke();
+                return Task.FromResult(false);
+            }
+            return SendAsync(values, () =>
+            {
+                Power = true;
+                Mode = (string)values[Config.Dps.Mode];
+                Fan = (string)values[Config.Dps.Fan];
+            });
+        }
 
         public Task<bool> SetToggleAsync(int dp, bool on) =>
             SendAsync(dp, on, () => _toggleOn[dp] = on);

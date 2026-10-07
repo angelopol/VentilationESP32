@@ -22,6 +22,11 @@ namespace Vento
             }));
             Fan("fan.on", "Encender (nivel 1)", () => client.SetModeAsync(1));
             Fan("fan.off", "Apagar", () => client.SetModeAsync(0));
+            Fan("fan.toggle", "Alternar encendido / apagado", async () =>
+            {
+                if (!await client.RefreshStateAsync() || client.State == null) return false;
+                return await client.SetModeAsync(client.State.Mode == 0 ? 1 : 0);
+            });
             async Task<bool> Step(int direction)
             {
                 if (!await client.RefreshStateAsync() || client.State == null) return false;
@@ -51,7 +56,18 @@ namespace Vento
                 {
                     Add("on", "Encender", () => ac.SetPowerAsync(true));
                     Add("off", "Apagar", () => ac.SetPowerAsync(false));
+                    Add("toggle", "Alternar encendido / apagado", async () =>
+                    {
+                        await ac.RefreshAsync(wait: true);
+                        return ac.Online && await ac.SetPowerAsync(!ac.Power);
+                    });
                 }
+                if (ac.Config.Dps.Power > 0 && ac.Config.Dps.Mode > 0 && ac.Config.Dps.Fan > 0)
+                    Add("fanCycle", "Encender ventilador en baja / alternar alta y baja", async () =>
+                    {
+                        await ac.RefreshAsync(wait: true);
+                        return ac.Online && await ac.CycleFanAsync();
+                    });
                 async Task<bool> Temperature(int direction)
                 {
                     await ac.RefreshAsync(wait: true);

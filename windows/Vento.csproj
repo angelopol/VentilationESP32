@@ -16,6 +16,7 @@
   </PropertyGroup>
 
   <ItemGroup>
+    <InternalsVisibleTo Include="Vento.Tests" />
     <EmbeddedResource Include="vento.ico" LogicalName="vento.ico" />
   </ItemGroup>
 

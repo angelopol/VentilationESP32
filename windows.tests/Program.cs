@@ -53,4 +53,35 @@ var config = new Config { Shortcuts = new() { large }, AirConditioners = new() {
 var restored = JsonSerializer.Deserialize<Config>(JsonSerializer.Serialize(config));
 Check(restored.Shortcuts[0].Keys.SequenceEqual(large.Keys) && restored.AirConditioners[0].CoolMode == "",
     "Persist large chords and explicit mode choices in JSON");
+var fanConfig = new AcConfig();
+Check(fanConfig.ResolveFan(false) == "low" && fanConfig.ResolveFan(true) == "high", "Resolve default low and high speeds");
+var startFan = AirConditioner.FanCycleCommand(fanConfig, false, "cold", "high");
+Check(startFan.Count == 3 && (bool)startFan[1] && (string)startFan[4] == "wind" && (string)startFan[5] == "low",
+    "Off air conditioner starts powered on in fan mode at low speed in a single command");
+Check((string)AirConditioner.FanCycleCommand(fanConfig, true, "cold", "high")[5] == "low",
+    "Cooling switches to fan mode at low speed");
+Check((string)AirConditioner.FanCycleCommand(fanConfig, true, "wind", "low")[5] == "high",
+    "Active low fan switches to high");
+Check((string)AirConditioner.FanCycleCommand(fanConfig, true, "wind", "high")[5] == "low",
+    "Active high fan switches to low");
+Check((string)AirConditioner.FanCycleCommand(fanConfig, true, "wind", "auto")[5] == "high",
+    "Other active fan speeds switch to high");
+fanConfig.Fans = new() { ["1"] = "Baja", ["3"] = "Alta" };
+Check(fanConfig.ResolveFan(false) == "1" && fanConfig.ResolveFan(true) == "3", "Resolve manufacturer speeds by label");
+fanConfig.Fans = new() { ["L"] = "Especial uno", ["H"] = "Especial dos" };
+Check(AirConditioner.FanCycleCommand(fanConfig, false, null, null) == null, "Reject unresolved speeds without sending partial commands");
+fanConfig.LowFan = "L"; fanConfig.HighFan = "H";
+Check((string)AirConditioner.FanCycleCommand(fanConfig, true, "wind", "L")[5] == "H", "Honor explicit speed mappings");
+var savedFan = JsonSerializer.Deserialize<AcConfig>(JsonSerializer.Serialize(fanConfig));
+Check(savedFan.LowFan == "L" && savedFan.HighFan == "H", "Persist speed mappings");
+fanConfig.HighFan = "L";
+Check(AirConditioner.FanCycleCommand(fanConfig, true, "wind", "L") == null, "Reject identical low and high mappings");
+fanConfig.HighFan = "missing";
+Check(fanConfig.ResolveFan(true) == null, "Reject unknown configured speed");
+fanConfig.HighFan = "";
+Check(fanConfig.ResolveFan(true) == null, "Respect unconfigured speed selection");
+fanConfig.HighFan = "H";
+fanConfig.Dps.Power = 0;
+Check(AirConditioner.FanCycleCommand(fanConfig, false, null, null) == null, "Require power DP for fan cycle");
+
 Console.WriteLine("All shortcut checks passed.");

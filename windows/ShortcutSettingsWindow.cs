@@ -13,7 +13,7 @@ namespace Vento
         private readonly GlobalShortcuts _shortcuts;
         private readonly List<ShortcutBinding> _draft;
         private readonly Dictionary<string, Button> _buttons = new();
-        private readonly List<(AcConfig Config, ComboBox Cool, ComboBox Fan)> _modes = new();
+        private readonly List<(AcConfig Config, ComboBox Cool, ComboBox Fan, ComboBox Low, ComboBox High)> _modes = new();
         private readonly TextBlock _status = new() { TextWrapping = TextWrapping.Wrap, Margin = new Thickness(0, 12, 0, 12) };
         private ShortcutBinding _recording;
 
@@ -56,20 +56,22 @@ namespace Vento
             {
                 content.Children.Add(new TextBlock { Text = ac.Name + " · Modos del equipo", FontWeight = FontWeights.SemiBold, Margin = new Thickness(0, 12, 0, 6) });
                 var row = new WrapPanel();
-                ComboBox ModeBox(string label, string selected)
+                ComboBox OptionBox(string label, string selected, IEnumerable<KeyValuePair<string, string>> options)
                 {
                     row.Children.Add(new TextBlock { Text = label, VerticalAlignment = VerticalAlignment.Center, Margin = new Thickness(0, 0, 8, 0) });
                     var box = new ComboBox { Width = 180, Margin = new Thickness(0, 0, 16, 0),
                         DisplayMemberPath = "Value", SelectedValuePath = "Key" };
                     box.Items.Add(new KeyValuePair<string, string>("", "Sin configurar"));
-                    foreach (var kv in ac.Config.Modes) box.Items.Add(kv);
+                    foreach (var kv in options) box.Items.Add(kv);
                     box.SelectedValue = selected ?? "";
                     row.Children.Add(box);
                     return box;
                 }
-                var cool = ModeBox("Frío:", ac.Config.ResolveMode(true));
-                var fan = ModeBox("Ventilador:", ac.Config.ResolveMode(false));
-                _modes.Add((ac.Config, cool, fan));
+                var cool = OptionBox("Frío:", ac.Config.ResolveMode(true), ac.Config.Modes);
+                var fan = OptionBox("Ventilador:", ac.Config.ResolveMode(false), ac.Config.Modes);
+                var low = OptionBox("Velocidad baja:", ac.Config.ResolveFan(false), ac.Config.Fans);
+                var high = OptionBox("Velocidad alta:", ac.Config.ResolveFan(true), ac.Config.Fans);
+                _modes.Add((ac.Config, cool, fan, low, high));
                 content.Children.Add(row);
             }
             content.Children.Add(new TextBlock { Text = "Acciones", FontSize = 18, Margin = new Thickness(0, 20, 0, 10) });
@@ -156,21 +158,30 @@ namespace Vento
             {
                 bool Assigned(string suffix) => _draft.Any(b => b.Action == "ac." + mode.Config.Id + "." + suffix && b.Keys.Count > 0);
                 if ((Assigned("temp.up") || Assigned("temp.down")) && string.IsNullOrEmpty(mode.Cool.SelectedValue as string) ||
-                    Assigned("fanMode") && string.IsNullOrEmpty(mode.Fan.SelectedValue as string))
+                    (Assigned("fanMode") || Assigned("fanCycle")) && string.IsNullOrEmpty(mode.Fan.SelectedValue as string))
                 { _status.Text = "Selecciona los modos frío y ventilador necesarios para «" + mode.Config.Name + "»."; return; }
+                if (Assigned("fanCycle") && (string.IsNullOrEmpty(mode.Low.SelectedValue as string) ||
+                    string.IsNullOrEmpty(mode.High.SelectedValue as string) || Equals(mode.Low.SelectedValue, mode.High.SelectedValue)))
+                { _status.Text = "Selecciona velocidades baja y alta diferentes para «" + mode.Config.Name + "»."; return; }
             }
             var oldBindings = _config.Shortcuts;
-            var oldModes = _modes.Select(m => (m.Config, m.Config.CoolMode, m.Config.FanMode)).ToList();
+            var oldModes = _modes.Select(m => (m.Config, m.Config.CoolMode, m.Config.FanMode, m.Config.LowFan, m.Config.HighFan)).ToList();
             foreach (var mode in _modes)
             {
                 mode.Config.CoolMode = mode.Cool.SelectedValue as string;
                 mode.Config.FanMode = mode.Fan.SelectedValue as string;
+                mode.Config.LowFan = mode.Low.SelectedValue as string;
+                mode.Config.HighFan = mode.High.SelectedValue as string;
             }
             _config.Shortcuts = _draft.Where(b => b.Keys.Count > 0).ToList();
             if (!_config.TrySave(out error))
             {
                 _config.Shortcuts = oldBindings;
-                foreach (var old in oldModes) { old.Config.CoolMode = old.CoolMode; old.Config.FanMode = old.FanMode; }
+                foreach (var old in oldModes)
+                {
+                    old.Config.CoolMode = old.CoolMode; old.Config.FanMode = old.FanMode;
+                    old.Config.LowFan = old.LowFan; old.Config.HighFan = old.HighFan;
+                }
                 _status.Text = "No se pudo guardar: " + error;
                 return;
             }
