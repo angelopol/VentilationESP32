@@ -115,6 +115,8 @@ namespace Vento
         private static readonly TimeSpan Hold = TimeSpan.FromSeconds(15);
 
         private readonly TuyaClient _tuya;
+        private readonly Func<IEnumerable<int>, Task<JsonElement>> _query;
+        private readonly Func<IDictionary<string, object>, Task> _send;
         private readonly SemaphoreSlim _lock = new SemaphoreSlim(1, 1);
         private readonly DispatcherTimer _timer;
         private int _watchers;
@@ -143,11 +145,16 @@ namespace Vento
 
         public bool IsToggleOn(int dp) => _toggleOn.TryGetValue(dp, out var on) && on;
 
-        public AirConditioner(AcConfig config)
+        public AirConditioner(AcConfig config) : this(config, null, null) { }
+
+        internal AirConditioner(AcConfig config, Func<IEnumerable<int>, Task<JsonElement>> query,
+                                Func<IDictionary<string, object>, Task> send)
         {
             Config = config;
             Config.Normalize();
             _tuya = new TuyaClient(config.Id, config.Key, config.Ip, config.ProtocolVersion());
+            _query = query ?? _tuya.QueryAsync;
+            _send = send ?? _tuya.SetAsync;
             _timer = new DispatcherTimer { Interval = PollInterval };
             _timer.Tick += async (s, e) => await RefreshAsync();
         }
@@ -229,21 +236,22 @@ namespace Vento
             };
         }
 
-        public Task<bool> CycleFanAsync()
+        public async Task<bool> CycleFanAsync()
         {
             var values = FanCycleCommand(Config, Power, Mode, Fan);
             if (values == null)
             {
                 Error = "Configura el modo ventilador y sus velocidades baja y alta en Configuración de atajos.";
                 Changed?.Invoke();
-                return Task.FromResult(false);
+                return false;
             }
-            return SendAsync(values, () =>
-            {
-                Power = true;
-                Mode = (string)values[Config.Dps.Mode];
-                Fan = (string)values[Config.Dps.Fan];
-            });
+            // Algunos equipos reinician la velocidad al recibir el modo, incluso si ya
+            // estaba seleccionado, o ignoran la velocidad enviada junto con él.
+            // Configurar primero el equipo y mandar la velocidad en una orden independiente.
+            string mode = (string)values[Config.Dps.Mode], fan = (string)values[Config.Dps.Fan];
+            if (!Power && !await SetPowerAsync(true)) return false;
+            if (Mode != mode && !await SetModeAsync(mode)) return false;
+            return await SetFanAsync(fan);
         }
 
         public Task<bool> SetToggleAsync(int dp, bool on) =>
@@ -276,12 +284,12 @@ namespace Vento
             try
             {
                 var dps = values.ToDictionary(kv => kv.Key.ToString(), kv => kv.Value);
-                try { await _tuya.SetAsync(dps); }
+                try { await _send(dps); }
                 catch (TuyaException)
                 {
                     // El aparato puede estar atendiendo otra conexión (p. ej. el ESP32): un reintento
                     await Task.Delay(500);
-                    await _tuya.SetAsync(dps);
+                    await _send(dps);
                 }
             }
             catch (TuyaException e)
@@ -305,7 +313,7 @@ namespace Vento
                 var d = Config.Dps;
                 var ask = new List<int> { d.Power, d.Setpoint, d.Temp, d.Mode, d.Fan };
                 foreach (var t in Toggles()) ask.Add(t.Dp);
-                Apply(await _tuya.QueryAsync(ask));
+                Apply(await _query(ask));
                 Online = true;
                 Error = null;
             }

@@ -137,7 +137,7 @@ Encender el ventilador selecciona el nivel 1. Subir/bajar recorre los niveles 0�
 
 **Alternar encendido / apagado:** asigna una combinación a esta acción del ventilador o de cada aire. Una pulsación enciende y la siguiente apaga. El ventilador vuelve al nivel 5 al encender; Auto/Progresivo cuentan como encendidos aunque el PWM esté a cero. El aire conserva su modo y velocidad.
 
-**Encender ventilador en baja / alternar alta y baja (aire):** si el aire está apagado o en otro modo, lo enciende en modo ventilador y velocidad baja. Si ya está encendido en modo ventilador, pasa a alta; si ya está en alta, vuelve a baja. No apaga el equipo. Puedes seleccionar las velocidades **baja** y **alta** en Configuración de atajos si el fabricante usa valores especiales. El encendido, modo y velocidad se envían juntos; cada pulsación consulta el estado y las acciones del mismo equipo se ejecutan en orden.
+**Encender ventilador en baja / alternar alta y baja (aire):** si el aire está apagado o en otro modo, lo enciende en modo ventilador y velocidad baja. Si ya está encendido en modo ventilador, pasa a alta; si ya está en alta, vuelve a baja. No apaga el equipo. Puedes seleccionar las velocidades **baja** y **alta** en Configuración de atajos si el fabricante usa valores especiales. Primero envía el encendido y el modo cuando hacen falta, y después la velocidad en una orden independiente. Si ya está en modo ventilador, solo envía la velocidad para evitar que el equipo la reinicie al recibir el modo otra vez. Cada pulsación consulta el estado y las acciones del mismo equipo se ejecutan en orden.
 
 **Pruebas de atajos:** `dotnet run --project windows.tests/Vento.Tests.csproj -c Release`
 

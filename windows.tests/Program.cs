@@ -57,7 +57,7 @@ var fanConfig = new AcConfig();
 Check(fanConfig.ResolveFan(false) == "low" && fanConfig.ResolveFan(true) == "high", "Resolve default low and high speeds");
 var startFan = AirConditioner.FanCycleCommand(fanConfig, false, "cold", "high");
 Check(startFan.Count == 3 && (bool)startFan[1] && (string)startFan[4] == "wind" && (string)startFan[5] == "low",
-    "Off air conditioner starts powered on in fan mode at low speed in a single command");
+    "Off air conditioner targets power on, fan mode and low speed");
 Check((string)AirConditioner.FanCycleCommand(fanConfig, true, "cold", "high")[5] == "low",
     "Cooling switches to fan mode at low speed");
 Check((string)AirConditioner.FanCycleCommand(fanConfig, true, "wind", "low")[5] == "high",
@@ -83,5 +83,46 @@ Check(fanConfig.ResolveFan(true) == null, "Respect unconfigured speed selection"
 fanConfig.HighFan = "H";
 fanConfig.Dps.Power = 0;
 Check(AirConditioner.FanCycleCommand(fanConfig, false, null, null) == null, "Require power DP for fan cycle");
+
+// Simulate a device that resets its speed on every mode write and ignores fan
+// speed when it is included in a command with other DPs.
+var deviceConfig = new AcConfig
+{
+    Id = "test", Key = "0123456789abcdef", Ip = "127.0.0.1",
+    Modes = new() { ["Cool"] = "Frío", ["Fan"] = "Ventilador" },
+    Fans = new() { ["Low"] = "Baja", ["High"] = "Alta" },
+};
+bool devicePower = false;
+string deviceMode = "Cool", deviceFan = "High";
+var writes = new List<Dictionary<string, object>>();
+Task<JsonElement> Query(IEnumerable<int> requested) => Task.FromResult(JsonSerializer.SerializeToElement(
+    new Dictionary<string, object> { ["1"] = devicePower, ["4"] = deviceMode, ["5"] = deviceFan }));
+Task Send(IDictionary<string, object> values)
+{
+    writes.Add(new(values));
+    if (values.TryGetValue("1", out var power)) devicePower = (bool)power;
+    if (values.TryGetValue("4", out var mode)) { deviceMode = (string)mode; deviceFan = "Low"; }
+    if (values.Count == 1 && values.TryGetValue("5", out var fan)) deviceFan = (string)fan;
+    return Task.CompletedTask;
+}
+var device = new AirConditioner(deviceConfig, Query, Send);
+using var vento = new VentoClient(new Config());
+var cycle = ShortcutActions.Create(vento, new[] { device }).Single(a => a.Id == "ac.test.fanCycle");
+Check(await cycle.Run() && devicePower && deviceMode == "Fan" && deviceFan == "Low",
+    "Shortcut starts real command sequence in fan mode at low speed");
+Check(writes.Count == 3 && writes[0].ContainsKey("1") && writes[1].ContainsKey("4") && writes[2].ContainsKey("5") &&
+    writes.All(w => w.Count == 1), "Send power, mode and speed separately in order");
+writes.Clear();
+Check(await cycle.Run() && deviceFan == "High", "Second shortcut press changes device speed to high");
+Check(writes.Count == 1 && writes[0].ContainsKey("5"), "Active fan changes only speed without resetting mode or power");
+writes.Clear();
+Check(await cycle.Run() && deviceFan == "Low", "Third shortcut press changes device speed back to low");
+Check(writes.Count == 1 && writes[0].ContainsKey("5"), "High to low also writes only speed");
+// A change made from the remote must override the previously requested cycle state.
+deviceMode = "Cool"; deviceFan = "High";
+writes.Clear();
+Check(await cycle.Run() && deviceMode == "Fan" && deviceFan == "Low", "Read external mode change before cycling");
+Check(writes.Count == 2 && writes[0].ContainsKey("4") && writes[1].ContainsKey("5"),
+    "Already powered device switches mode before setting speed");
 
 Console.WriteLine("All shortcut checks passed.");
